@@ -34,7 +34,6 @@ def read_fiber_sens(file_path):
     sns_positions = pd.read_hdf(file_path, "/MC/sns_positions", where='sensor_name == F_SENSOR')
     sns_response = pd.read_hdf(file_path, "/MC/sns_response")
 
-
     sns_response = sns_response.loc[sns_response.sensor_id.isin(sns_positions.sensor_id)] # get the positions of said sensors
 
 
@@ -98,3 +97,18 @@ def print_sens_geometry(file_path, selected_sens = None):
 
 
     return ax
+
+
+
+def create_or_update_global_variable(global_vars, var_name, var_value, verbose):
+
+    if verbose:
+        if var_name in global_vars:
+            print(f"{var_name} already exists! Updating variable.")
+        else:
+            print(f"{var_name} doesn't exist yet! Creating variable.")
+
+    # Set the variable as global or update its value
+    global_vars[var_name] = var_value
+
+create_or_update_global_variable = np.vectorize(create_or_update_global_variable) # Vectorize the function
