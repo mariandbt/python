@@ -43,9 +43,6 @@ def set_s2_table_specs(s2_table):
 
     s2_tab = s2_table[f'sens_200'] # all maps have the same specs, so we get whichever
 
-    # Set global variables
-    global s2tab_x_nbins, s2tab_y_nbins, s2tab_x_bin_width, s2tab_y_bin_width, s2tab_x_min, s2tab_y_min, s2tab_x_max, s2tab_y_max
-
     s2tab_x_nbins, s2tab_y_nbins = len(s2_tab.bin_initial_x.unique()), len(s2_tab.bin_initial_y.unique())
 
     s2tab_x_bin_width = (s2_tab.bin_final_x - s2_tab.bin_initial_x)[0]
@@ -56,6 +53,15 @@ def set_s2_table_specs(s2_table):
 
     s2tab_x_max = s2_tab.bin_final_x.max()
     s2tab_y_max = s2_tab.bin_final_y.max()
+
+
+    # Set global variables
+    vars_names = ('s2tab_x_nbins', 's2tab_y_nbins', 's2tab_x_bin_width',
+                  's2tab_y_bin_width', 's2tab_x_min', 's2tab_y_min', 's2tab_x_max', 's2tab_y_max')
+    vars_values = (s2tab_x_nbins, s2tab_y_nbins, s2tab_x_bin_width,
+                   s2tab_y_bin_width, s2tab_x_min, s2tab_y_min, s2tab_x_max, s2tab_y_max)
+
+    setup.create_or_update_global_variable(globals(), vars_names, vars_values, verbose = False)
 
 
 
@@ -257,4 +263,4 @@ def create_s2_signal(s2_table, list_of_bb_file_paths, output_file_path):
 
                         group.create_dataset(table_id, data=table_data)
 
-    print('Done! :)')
+    print('Done! s2 signal created :)')
