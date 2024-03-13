@@ -2,7 +2,7 @@
 
 # Script to create a s2 table from an .h5 file
 import sys
-sys.path.append('/home/investigator/mariandbt/python/notebooks/modules')
+sys.path.append('/scratch/marian.dbt/s2simulation/modules')
 
 from import_modules import *
 
@@ -11,13 +11,10 @@ import s2_table as s2tab
 
 path = '/home/investigator/mariandbt/python/data'
 path = path + '/20231025_NEXT100_full_mapping'
-# file_path = os.path.join(path, "Next100_full_mapp_s2_inicioEL_100Kev.next.h5")
-
-# list_of_ie_file_paths = [file_path]
 
 list_of_ie_file_paths = []
 for i in range(100):
-    file_path = os.path.join(path, f'20240215_Next100_ie_s2_{i+1}.next.h5')
+    file_path = os.path.join(path, f'20240228_Next100_ie_s2_{i+1}.next.h5')
     list_of_ie_file_paths.append(file_path)
 
 # Global params
@@ -32,5 +29,15 @@ yield_ = 1050 # ph/e⁻
 
 s2tab.set_map_specs(globals(), x_min = x_min, x_max = x_max,
                     y_min = y_min, y_max = y_max, bin_width_in_mm = bin_width)
+# create and print an example map to check
 
-s2tab.create_s2_table(list_of_ie_file_paths, 20240226) # we use the current date as s2_table_id
+selected_sensors = [204, 240]
+
+for selected_sens in selected_sensors:
+    _, bins, maps = s2tab.create_response_maps(list_of_ie_file_paths, selected_sens)
+
+    # Specify the PDF file name
+    png_filename = f'sens_{selected_sens}_maps.png'
+
+    s2tab.print_response_maps(selected_sens, bins, maps, yield_)
+    plt.savefig(png_filename)

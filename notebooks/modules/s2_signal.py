@@ -10,7 +10,7 @@ import set_up as setup
 # ________________________________________________________________________________________________________________
 
 
-def set_global_parameters(global_vars, n_bb_files=None, n_bb_events_per_file=None, n_panels=None, n_sensors=None):
+def set_global_parameters(global_vars, n_bb_files=None, n_bb_events_per_file=None, n_panels=None, n_sensors=None, v_drift_EL=None):
     # If parameters are not provided, ask the user for input
     if n_bb_files is None:
         n_bb_files = int(input("Specify the number of bb data files: "))
@@ -20,16 +20,21 @@ def set_global_parameters(global_vars, n_bb_files=None, n_bb_events_per_file=Non
         n_panels = int(input("Specify the number of panels: "))
     if n_sensors is None:
         n_sensors = int(input("Specify the number of sensors: "))
+    if v_drift_EL is None:
+        v_drift_EL = input("Specify drift velocity of the EL region in [mm]/[ns]: ")
     # Add more parameters as needed
 
     dtheta = 2*np.pi/n_panels # rad
     dpos = int(n_sensors/n_panels) # number of sensors in 1 panel
 
     chunksize = int(2e5) # aprox length of an event to read the tables
+    z_half_EL = -5.1 # [mm]
 
     # Set global variables
-    vars_names = ('n_bb_files', 'n_bb_events_per_file', 'n_panels', 'n_sensors', 'dtheta', 'dpos', 'chunksize')
-    vars_values = (n_bb_files, n_bb_events_per_file, n_panels, n_sensors, dtheta, dpos, chunksize)
+    vars_names = ('n_bb_files', 'n_bb_events_per_file', 'n_panels', 'n_sensors', 'dtheta', 'dpos',
+                  'chunksize','v_drift_EL', 'z_half_EL')
+    vars_values = (n_bb_files, n_bb_events_per_file, n_panels, n_sensors, dtheta, dpos,
+                   chunksize, v_drift_EL, z_half_EL)
 
     setup.create_or_update_global_variable(global_vars, vars_names, vars_values, verbose = False)
     setup.create_or_update_global_variable(globals(), vars_names, vars_values, verbose = False)
@@ -99,6 +104,8 @@ def build_particle_dict(particles):
     tt_dict = dict(zip(particles['particle_id'], particles['final_t']))
     xx_dict = dict(zip(particles['particle_id'], particles['final_x']))
     yy_dict = dict(zip(particles['particle_id'], particles['final_y']))
+    zz_dict = dict(zip(particles['particle_id'], particles['final_z']))
+
     rr_dict = dict(zip(particles['particle_id'], np.sqrt(particles['final_x']**2 + particles['final_y']**2)))
     alpha_dict = dict(zip(particles['particle_id'], np.arctan2(particles['final_y'], particles['final_x'])))
 
@@ -117,8 +124,8 @@ def build_particle_dict(particles):
     new_yy_dict = dict(zip(particles['particle_id'], new_yy))
 
 
-    dict_names = ('tt_dict', 'xx_dict', 'yy_dict', 'rr_dict', 'alpha_dict', 'rot_dict', 'new_xx_dict', 'new_yy_dict')
-    dicts = (tt_dict, xx_dict, yy_dict, rr_dict, alpha_dict, rot_dict, new_xx_dict, new_yy_dict)
+    dict_names = ('tt_dict', 'xx_dict', 'yy_dict', 'zz_dict', 'rr_dict', 'alpha_dict', 'rot_dict', 'new_xx_dict', 'new_yy_dict')
+    dicts = (tt_dict, xx_dict, yy_dict, zz_dict, rr_dict, alpha_dict, rot_dict, new_xx_dict, new_yy_dict)
 
     setup.create_or_update_global_variable(globals(), dict_names, dicts, verbose = False)
 
@@ -213,7 +220,7 @@ find_s2 = np.vectorize(find_s2) # Vectorize the function
 
 
 
-def create_s2_signal(s2_table, list_of_bb_file_paths, output_file_path):
+def create_s2_signal(s2_table, list_of_bb_file_paths, output_file_path, EL_ON = False):
 
     set_s2_table_specs(s2_table)
     build_s2_tab_dict(s2_table)
@@ -239,7 +246,12 @@ def create_s2_signal(s2_table, list_of_bb_file_paths, output_file_path):
 
                     build_particle_dict(bb_ie)
 
+                    z_ie = np.array(list(zz_dict.values()))
                     time_data = np.array(list(tt_dict.values()))
+
+                    t_delay = (z_ie - z_half_EL)/v_drift_EL
+
+                    time_data = time_data + t_delay
 
                     prim_e_x = prim_e.initial_x.values[0]
                     prim_e_y = prim_e.initial_y.values[0]
@@ -257,7 +269,7 @@ def create_s2_signal(s2_table, list_of_bb_file_paths, output_file_path):
 
                         # Create the DataFrame after the loop using a dictionary
                         table_data = pd.DataFrame({'time': time_data, 's2': s2_data,
-                                                   'prim_e_x':prim_e_x, 'prim_e_y':prim_e_y,
+                                                #    'prim_e_x':prim_e_x, 'prim_e_y':prim_e_y,
                                                    'prim_e_r':prim_e_r
                                                    })
 

@@ -4,16 +4,21 @@ from import_modules import *
 
 import set_up as setup
 
-def set_global_parameters(global_vars, t_binnin_in_ns=None):
+def get_globals():
+    return globals()
+
+def set_global_parameters(global_vars, t_binnin_in_ns=None, fiducial_radio_in_mm=None):
     # If parameters are not provided, ask the user for input
     if t_binnin_in_ns is None:
         t_binnin_in_ns = int(input("Specify the time binning used in the simulation: "))
+    if fiducial_radio_in_mm is None:
+        fiducial_radio_in_mm = int(input("Specify the fiducial radio in mm cut to use: "))
 
     # Set global variables
-    vars_names = ('t_binnin')
-    vars_values = (t_binnin_in_ns)
+    vars_names = ('t_binnin', 'fiducial_radio')
+    vars_values = (t_binnin_in_ns, fiducial_radio_in_mm)
 
-    setup.create_or_update_global_variable(global_vars, vars_names, vars_values, verbose = False)
+    setup.create_or_update_global_variable(global_vars, vars_names, vars_values, verbose = True)
     setup.create_or_update_global_variable(globals(), vars_names, vars_values, verbose = False)
 
     # Set more global variables as needed
@@ -26,11 +31,13 @@ def build_offline_s2_max_dict(offline_s2_file_path, bin_width_in_us = 1):
     # Max value of the s2 signals dictionary building
 
     columns = {0:'time',
-               1:'s2'
+               1:'s2',
+               2:'r'
               }
 
     bin_width = bin_width_in_us*1000 # [ns] = 1 [us]
     s2_max_dict = {} # max s2 peak per event
+    prim_e_r_dict = {} # radial coordinate of each event
 
     # Open the HDF5 file in read mode
     with h5py.File(offline_s2_file_path, 'r') as file:
@@ -50,8 +57,15 @@ def build_offline_s2_max_dict(offline_s2_file_path, bin_width_in_us = 1):
                 signal = pd.DataFrame(signal)
                 signal.rename(columns = columns, inplace=True)
 
+                # print(signal.r[0])
+
                 t = signal.time
                 s2 = signal.s2
+                prim_e_r = signal.r[0]
+
+                if prim_e_r > fiducial_radio:
+                    continue
+
                 binin = np.arange(t.min() - bin_width, t.max() + 2*bin_width, bin_width)
 
                 # Create a histogram
@@ -60,16 +74,24 @@ def build_offline_s2_max_dict(offline_s2_file_path, bin_width_in_us = 1):
 
                 s2_max.append(hist_values.max()) # peak of s2 signal per sensor
 
+
+            if prim_e_r > fiducial_radio:
+                print('Discarded event by fiducial cut')
+                continue
             s2_max_dict[event] = max(s2_max) # max s2 peak from all sensors
+            prim_e_r_dict[event] = prim_e_r # radial coordinate of each event
 
         n_sensors = len(group.keys()) # all events have all sensors, just get the last one
 
     setup.create_or_update_global_variable(globals(), 'n_sensors', n_sensors, verbose = True)
 
-    return s2_max_dict
+    return s2_max_dict, prim_e_r_dict
 
 
-def print_online_s2waveform(sns_response, event, sensor, bin_width_in_us = 1, new_figure = True, comment = ''):
+def print_online_s2waveform(sns_response, event, sensor,
+                            bin_width_in_us = 1,
+                            t_window_min_in_us = 400, t_window_max_in_us = 1000,
+                            new_figure = True, comment = ''):
 
     font_size = 15
 
@@ -95,10 +117,10 @@ def print_online_s2waveform(sns_response, event, sensor, bin_width_in_us = 1, ne
     online_signal.time_bin = online_signal.time_bin*t_binnin # [ns]
 
     tt = online_signal.time_bin*1e-3 # [us]
-    online_s2 = online_signal.charge # [e]
+    online_s2 = online_signal.charge # [pes]
 
-    t_window_min = 400 # [us]
-    t_window_max = 1000 # [us]
+    t_window_min = t_window_min_in_us # [us]
+    t_window_max = t_window_max_in_us # [us]
 
     t_window = (t_window_min < tt) & (tt < t_window_max)
 
@@ -119,7 +141,7 @@ def print_online_s2waveform(sns_response, event, sensor, bin_width_in_us = 1, ne
 
     ax.set_title(f's2 waveform for sensor {sensor}', fontsize = font_size);
     ax.set_xlabel('Time [us]', fontsize = font_size);
-    ax.set_ylabel('Signal [e]', fontsize = font_size);
+    ax.set_ylabel('Signal [pes]', fontsize = font_size);
 
     ax.tick_params(axis='both', labelsize = font_size*2/3)
 
@@ -142,7 +164,8 @@ def print_offline_s2waveform(offline_s2_file_path, event, sensor, bin_width_in_u
     sens = f'sens_{sensor}'
 
     columns = {0:'time',
-               1:'s2'
+               1:'s2',
+               2:'prim_e_r'
               }
 
 
@@ -178,7 +201,7 @@ def print_offline_s2waveform(offline_s2_file_path, event, sensor, bin_width_in_u
 
 
     t = signal.time*1e-3 # [us]
-    s2 = signal.s2 # [e]
+    s2 = signal.s2 # [pes]
 
     bin_width = bin_width_in_us # time units ([us])
 
@@ -195,7 +218,7 @@ def print_offline_s2waveform(offline_s2_file_path, event, sensor, bin_width_in_u
 
     ax.set_title(f's2 of event {ev} in {sens}', fontsize = font_size);
     ax.set_xlabel('Time [us]', fontsize = font_size);
-    ax.set_ylabel('Signal [e]', fontsize = font_size);
+    ax.set_ylabel('Signal [pes]', fontsize = font_size);
 
     ax.tick_params(axis='both', labelsize = font_size*2/3)
 
@@ -227,7 +250,10 @@ def print_dyn_range_hist(s2_max_dict, bin_width_in_pes = 250):
     ax.text(0.6, .75, '$\sigma$=%.2f'%(s2.std()),
     transform=ax.transAxes, fontsize=0.5*font_size, bbox=dict(facecolor='1.', edgecolor='none', pad=3.0))
 
-    ax.text(0.6, .7, '$N_{events}$ = %s'%(int(events.sum())),
+    ax.text(0.6, .7, '$N_{entries}$ = %s'%(int(events.sum())),
+    transform=ax.transAxes, fontsize=0.5*font_size, bbox=dict(facecolor='1.', edgecolor='none', pad=3.0))
+
+    ax.text(0.6, .65, 'Fiducial radio cut = %.2f [mm]'%(fiducial_radio),
     transform=ax.transAxes, fontsize=0.5*font_size, bbox=dict(facecolor='1.', edgecolor='none', pad=3.0))
 
 

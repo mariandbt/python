@@ -26,9 +26,11 @@ def set_map_specs(global_vars, x_min = None, x_max = None, y_min = None, y_max =
     x_lims = np.array([x_min, x_max])
     y_lims = np.array([y_min, y_max])
 
+    x_nbins, y_nbins, xedges, yedges = map_binnin(x_lims, y_lims, bin_width)
+
     # Set global variables
-    vars_names = ('x_lims', 'y_lims', 'bin_width')
-    vars_values = (x_lims, y_lims, bin_width)
+    vars_names = ('x_lims', 'y_lims', 'bin_width', 'x_nbins', 'y_nbins', 'xedges', 'yedges')
+    vars_values = (x_lims, y_lims, bin_width, x_nbins, y_nbins, xedges, yedges)
 
     setup.create_or_update_global_variable(global_vars, vars_names, vars_values, verbose = False)
     setup.create_or_update_global_variable(globals(), vars_names, vars_values, verbose = False)
@@ -82,18 +84,14 @@ def map_binnin(x, y, bin_width):
     return x_nbins, y_nbins, xedges, yedges
 
 
+
 def create_response_maps(list_of_ie_file_paths, selected_sens):
-
-
-    x_nbins, y_nbins, xedges, yedges = map_binnin(x_lims, y_lims, bin_width)
 
     values_in_bin_dict = {}
 
     # Initialize lists to store statistics for each bin
-    mean_per_bin = np.zeros((x_nbins, y_nbins))
-    std_per_bin = np.zeros((x_nbins, y_nbins))
-    entries_per_bin = np.zeros((x_nbins, y_nbins))
-    mean_per_bin_err = np.zeros((x_nbins, y_nbins))
+    charge_per_bin = np.zeros((x_nbins, y_nbins))
+    counts_per_bin = np.zeros((x_nbins, y_nbins))
 
     for file_path in list_of_ie_file_paths:
 
@@ -106,49 +104,32 @@ def create_response_maps(list_of_ie_file_paths, selected_sens):
 
         # ________________________________________________________________________________________________________________
 
-
         n_events = particles.event_id.max() + 1 # save number of events simulated
-
         ev_x0, ev_y0, ev_z0 = event_coordinates(particles)
-
         sens_response = sens_selection(sns_response, n_events, selected_sens)
-
         event_charge = sens_response.groupby("event_id").charge.sum() # total charge detected on that sensor for each event
 
+        # XY-plane
+        # Create a 2D histogram
+        hist, _, _ = np.histogram2d(ev_x0, ev_y0,
+                                    bins=(xedges, yedges),
+                                    weights = event_charge,
+                                    density=False);
+        charge_per_bin = charge_per_bin + hist
 
-        # Iterate over each bin
-        for i in range(x_nbins):
-            if i not in values_in_bin_dict.keys():
-                values_in_bin_dict[i] = {}
+        hist_counts, _, _ = np.histogram2d(ev_x0, ev_y0,
+                                           bins=(xedges, yedges),
+                                           density=False);
+        counts_per_bin = counts_per_bin + hist_counts
 
-            for j in range(y_nbins):
+    # Calculate the mean values in each bin (normalized histogram)
+    mean_per_bin = np.where(counts_per_bin > 0., charge_per_bin / counts_per_bin, 0.);
 
-                if j not in values_in_bin_dict[i].keys():
-                    values_in_bin_dict[i][j] = np.array([])
-
-                # Indices of data points in the current bin
-                mask = ((ev_x0 >= xedges[i]) & (ev_x0 < xedges[i + 1]) &
-                        (ev_y0 >= yedges[j]) & (ev_y0 < yedges[j + 1]))
-
-                # Extract values and weights in the current bin
-                values_in_bin_dict[i][j] = np.concatenate((values_in_bin_dict[i][j], event_charge[mask]))
-
-
-    # Iterate over each bin
-    for i in range(x_nbins):
-        for j in range(y_nbins):
-            # Calculate weighted mean and standard deviation
-            mean_value = np.mean(values_in_bin_dict[i][j])
-            std_value = np.std(values_in_bin_dict[i][j])
-            entries_value = len(values_in_bin_dict[i][j])
-
-            # Append to lists
-            mean_per_bin[i][j] = mean_value
-            std_per_bin[i][j] = std_value
-            entries_per_bin[i][j] = entries_value
-            mean_per_bin_err[i][j] = np.where(entries_value*mean_value> 0.,
-                                              std_value*100/(np.sqrt(entries_value)*mean_value),
-                                              0.);
+    std_per_bin = np.sqrt(mean_per_bin) # poisson
+    entries_per_bin = counts_per_bin
+    mean_per_bin_err = np.where(entries_per_bin*mean_per_bin> 0.,
+                                std_per_bin*100/(np.sqrt(entries_per_bin)*mean_per_bin),
+                                0.);
 
     mean_per_bin = np.nan_to_num(mean_per_bin)
     std_per_bin = np.nan_to_num(std_per_bin)
@@ -167,7 +148,7 @@ def create_response_maps(list_of_ie_file_paths, selected_sens):
     return selected_sens, (xedges, yedges), (mean_per_bin, std_per_bin, mean_per_bin_err, entries_per_bin)
 
 
-def print_sensor_map(particles, sns_positions, selected_sens, bins, mean_per_bin):
+def print_sensor_map(particles, sns_positions, selected_sens, mean_per_bin):
 
 
     gs_kw = {'height_ratios': [1, 1.2], 'width_ratios': [1]}
@@ -175,8 +156,6 @@ def print_sensor_map(particles, sns_positions, selected_sens, bins, mean_per_bin
 
     font_size = 22
     offset = 0.
-
-    xedges, yedges = bins
 
     # sector plot
     ax[0].plot(particles.initial_x, particles.initial_y, 'o')
@@ -218,13 +197,12 @@ def print_sensor_map(particles, sns_positions, selected_sens, bins, mean_per_bin
 
 
 
-def print_response_maps(selected_sens, bin_edges, maps, yield_):
+def print_response_maps(selected_sens, maps, yield_):
 
     fig, ax = plt.subplots(nrows = 2, ncols = 2, figsize=(10,5), constrained_layout=True)
     font_size = 11
     offset = 0.
 
-    xedges, yedges = bin_edges
     mean_per_bin, std_per_bin, mean_per_bin_err, entries_per_bin = maps
 
 
@@ -260,19 +238,15 @@ def print_response_maps(selected_sens, bin_edges, maps, yield_):
     fig.suptitle(f'Maps for sens_{selected_sens}', fontsize = 1.5*font_size);
 
 
-
 def create_s2_table(list_of_ie_file_paths, s2_table_id):
 
-    x_nbins, y_nbins, xedges, yedges = map_binnin(x_lims, y_lims, bin_width)
     s2_dict = {}
 
     values_in_bin_dict = {}
 
     # Initialize lists to store statistics for each bin
-    mean_per_bin = np.zeros((x_nbins, y_nbins))
-    std_per_bin = np.zeros((x_nbins, y_nbins))
-    entries_per_bin = np.zeros((x_nbins, y_nbins))
-    mean_per_bin_err = np.zeros((x_nbins, y_nbins))
+    charge_per_bin = {}
+    counts_per_bin = {}
 
     sns_positions, _ = setup.read_fiber_sens(list_of_ie_file_paths[0])
     n_sens = len(sns_positions.sensor_id)
@@ -298,30 +272,42 @@ def create_s2_table(list_of_ie_file_paths, s2_table_id):
 
         for ii, selected_sens in enumerate(np.sort(sns_positions.sensor_id)):
 
-            if selected_sens not in values_in_bin_dict.keys():
-                values_in_bin_dict[selected_sens] = {}
+            if selected_sens not in charge_per_bin.keys():
+                charge_per_bin[selected_sens] = np.zeros((x_nbins, y_nbins))
+                counts_per_bin[selected_sens] = np.zeros((x_nbins, y_nbins))
 
 
             sens_response = sens_selection(sns_response, n_events, selected_sens)
-
             event_charge = sens_response.groupby("event_id").charge.sum() # total charge detected on that sensor for each event
 
-            # Iterate over each bin
             for i in range(x_nbins):
-                if i not in values_in_bin_dict[selected_sens].keys():
-                    values_in_bin_dict[selected_sens][i] = {}
-
                 for j in range(y_nbins):
-
-                    if j not in values_in_bin_dict[selected_sens][i].keys():
-                        values_in_bin_dict[selected_sens][i][j] = np.array([])
-
                     # Indices of data points in the current bin
                     mask = ((ev_x0 >= xedges[i]) & (ev_x0 < xedges[i + 1]) &
                             (ev_y0 >= yedges[j]) & (ev_y0 < yedges[j + 1]))
 
                     # Extract values and weights in the current bin
-                    values_in_bin_dict[selected_sens][i][j] = np.concatenate((values_in_bin_dict[selected_sens][i][j], event_charge[mask]))
+                    values_in_bin = event_charge[mask]
+
+                    charge_per_bin[selected_sens][i][j] = charge_per_bin[selected_sens][i][j] + values_in_bin.sum()
+                    counts_per_bin[selected_sens][i][j] = counts_per_bin[selected_sens][i][j] + len(values_in_bin)
+
+
+            # # XY-plane
+            # # Create a 2D histogram
+            # hist, _, _ = np.histogram2d(ev_x0, ev_y0,
+            #                             bins=(xedges, yedges),
+            #                             weights = event_charge,
+            #                             density=False);
+            # charge_per_bin[selected_sens] = charge_per_bin[selected_sens] + hist
+            #
+            # hist_counts, _, _ = np.histogram2d(ev_x0, ev_y0,
+            #                                    bins=(xedges, yedges),
+            #                                    density=False);
+            # counts_per_bin[selected_sens] = counts_per_bin[selected_sens] + hist_counts
+
+
+
     # ****************************************************************************************
 
     print(f'Creating table ...')
@@ -329,34 +315,58 @@ def create_s2_table(list_of_ie_file_paths, s2_table_id):
     for ii, selected_sens in enumerate(np.sort(sns_positions.sensor_id)):
         print(f'Sensor {(ii+1):.0f}/{n_sens}')
 
-        # Initialize lists to store statistics for each bin
-        mean_per_bin = np.zeros((x_nbins, y_nbins))
+        # # Calculate the mean values in each bin (normalized histogram)
+        # # mean_per_bin = np.where(counts_per_bin[selected_sens] > 0., charge_per_bin[selected_sens] / counts_per_bin[selected_sens], 0.);
+        # mean_per_bin = np.divide(charge_per_bin[selected_sens],
+        #                          counts_per_bin[selected_sens],
+        #                          out=np.zeros_like(charge_per_bin[selected_sens]),
+        #                          where=counts_per_bin[selected_sens] != 0)
+        #
+        # std_per_bin = np.sqrt(mean_per_bin) # poisson
+        # entries_per_bin = counts_per_bin[selected_sens]
+        # mean_per_bin_err = np.where(entries_per_bin*mean_per_bin> 0.,
+        #                             std_per_bin*100/(np.sqrt(entries_per_bin)*mean_per_bin),
+        #                             0.);
+        #
+        # mean_per_bin = np.nan_to_num(mean_per_bin)
+        # std_per_bin = np.nan_to_num(std_per_bin)
+        # mean_per_bin_err = np.nan_to_num(mean_per_bin_err)
+        # entries_per_bin = np.nan_to_num(entries_per_bin)
 
-        # Iterate over each bin
-        for i in range(x_nbins):
-            for j in range(y_nbins):
+        mean_per_bin = np.zeros_like(counts_per_bin[selected_sens])
+        std_per_bin = np.zeros_like(counts_per_bin[selected_sens])
+        mean_per_bin_err = np.zeros_like(counts_per_bin[selected_sens])
+        entries_per_bin = np.zeros_like(counts_per_bin[selected_sens])
 
-                # Extract values and weights in the current bin
-                values_in_bin = values_in_bin_dict[selected_sens][i][j]
 
-                # Calculate weighted mean and standard deviation
-                mean_value = np.mean(values_in_bin)
-
-                # Append to lists
-                mean_per_bin[i][j] = mean_value
-
-        mean_per_bin = np.nan_to_num(mean_per_bin)
     # ****************************************************************************************
         table_id = f'sens_{selected_sens}'
         table_data = pd.DataFrame(columns=[])
 
         for i in range(len(xedges) - 1):
             for j in range(len(yedges) - 1):
+
+                counts_in_bin = counts_per_bin[selected_sens][i][j]
+                charge_in_bin = charge_per_bin[selected_sens][i][j]
+
+                if counts_in_bin > 0:
+                    mean_value = charge_in_bin/counts_in_bin
+                else:
+                    mean_value = 0
+
+                std_in_bin = np.sqrt(mean_per_bin) # poisson
+
+                if counts_in_bin*mean_value> 0:
+                    mean_in_bin_err = std_in_bin*100/(np.sqrt(counts_in_bin)*mean_value)
+
+
+
                 bin_x0 = xedges[i]
                 bin_xf = xedges[i+1]
                 bin_y0 = yedges[j]
                 bin_yf = yedges[j+1]
-                s2 = mean_per_bin[i, j]
+                # s2 = mean_per_bin[i, j]
+                s2 = mean_value
 
                 new_row = {'bin_x0':bin_x0, 'bin_xf':bin_xf,
                            'bin_y0':bin_y0, 'bin_yf':bin_yf,
@@ -377,85 +387,3 @@ def create_s2_table(list_of_ie_file_paths, s2_table_id):
     # ****************************************************************************************
 
     print('Done! s2 table created :)')
-
-
-
-# def create_s2_table(file_path, bin_width, s2_table_id):
-#
-#     # ________________________________________________________________________________________________________________
-#     # Data reading
-#     # ________________________________________________________________________________________________________________
-#
-#     particles = pd.read_hdf(file_path, "/MC/particles")
-#     sns_positions, sns_response = setup.read_fiber_sens(file_path)
-#
-#     # ________________________________________________________________________________________________________________
-#
-#     n_sens = len(sns_positions.sensor_id)
-#     n_events = particles.event_id.max() + 1 # save number of events simulated
-#
-#     ev_x0, ev_y0, ev_z0 = event_coordinates(particles)
-#     x_nbins, y_nbins, xedges, yedges = map_binnin(ev_x0, ev_y0, bin_width)
-#
-#     s2_dict = {}
-#
-#     for ii, selected_sens in enumerate(np.sort(sns_positions.sensor_id)):
-#
-#         print(f'{ii:.0f}/{n_sens}')
-#
-#         sens_response = sens_selection(sns_response, n_events, selected_sens)
-#
-#         event_charge = sens_response.groupby("event_id").charge.sum() # total charge detected on that sensor for each event
-#
-#     # ****************************************************************************************
-#         # Initialize lists to store statistics for each bin
-#         mean_per_bin = np.zeros((x_nbins, y_nbins))
-#
-#         # Iterate over each bin
-#         for i in range(x_nbins):
-#             for j in range(y_nbins):
-#                 # Indices of data points in the current bin
-#                 mask = ((ev_x0 >= xedges[i]) & (ev_x0 < xedges[i + 1]) &
-#                         (ev_y0 >= yedges[j]) & (ev_y0 < yedges[j + 1]))
-#
-#                 # Extract values and weights in the current bin
-#                 values_in_bin = event_charge[mask]
-#
-#                 # Calculate weighted mean and standard deviation
-#                 mean_value = np.mean(values_in_bin)
-#
-#                 # Append to lists
-#                 mean_per_bin[i][j] = mean_value
-#
-#         mean_per_bin = np.nan_to_num(mean_per_bin)
-#     # ****************************************************************************************
-#         table_id = f'sens_{selected_sens}'
-#         table_data = pd.DataFrame(columns=[])
-#
-#         for i in range(len(xedges) - 1):
-#             for j in range(len(yedges) - 1):
-#                 bin_x0 = xedges[i]
-#                 bin_xf = xedges[i+1]
-#                 bin_y0 = yedges[j]
-#                 bin_yf = yedges[j+1]
-#                 s2 = mean_per_bin[i, j]
-#
-#                 new_row = {'bin_x0':bin_x0, 'bin_xf':bin_xf,
-#                            'bin_y0':bin_y0, 'bin_yf':bin_yf,
-#                            's2':s2
-#                           }
-#
-#                 table_data = table_data.append(new_row, ignore_index=True)
-#     #             print(table_data)
-#
-#         s2_dict[table_id] = table_data
-#
-#
-#     # Save the 3D dictionary using HDF5 format
-#     with h5py.File(f"{s2_table_id}_s2_table.h5", 'w') as file:
-#         for table_id, table_data in s2_dict.items():
-#             file.create_dataset(table_id, data=table_data.values)
-#
-#     # ****************************************************************************************
-#
-#     print('Done! s2 table created :)')

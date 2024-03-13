@@ -34,6 +34,8 @@ list_of_bb_file_paths = [bb_file_path]
 n_panels = 18
 n_sensors = 90
 
+v_drift_EL = 2.5e-3 # [mm]/[ns] = 2.5 [mm]/[us]
+
 n_bb_files = 1
 n_bb_events_per_file = 200
 
@@ -45,7 +47,8 @@ s2sig.set_global_parameters(globals(),
                             n_bb_files = n_bb_files,
                             n_bb_events_per_file = n_bb_events_per_file,
                             n_panels = n_panels,
-                            n_sensors = n_sensors
+                            n_sensors = n_sensors,
+                            v_drift_EL = v_drift_EL
                            )
 
 s2sig.create_s2_signal(s2_table, list_of_bb_file_paths, output_file_path)
