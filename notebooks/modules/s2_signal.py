@@ -10,7 +10,8 @@ import set_up as setup
 # ________________________________________________________________________________________________________________
 
 
-def set_global_parameters(global_vars, n_bb_files=None, n_bb_events_per_file=None, n_panels=None, n_sensors=None, v_drift_EL=None):
+def set_global_parameters(global_vars, n_bb_files=None, n_bb_events_per_file=None, n_panels=None, n_sensors=None,
+                          v_drift_EL=None, t_resolution_in_ns = 25):
     # If parameters are not provided, ask the user for input
     if n_bb_files is None:
         n_bb_files = int(input("Specify the number of bb data files: "))
@@ -30,11 +31,13 @@ def set_global_parameters(global_vars, n_bb_files=None, n_bb_events_per_file=Non
     chunksize = int(2e5) # aprox length of an event to read the tables
     z_half_EL = -5.1 # [mm]
 
+    t_res = t_resolution_in_ns # [ns]
+
     # Set global variables
     vars_names = ('n_bb_files', 'n_bb_events_per_file', 'n_panels', 'n_sensors', 'dtheta', 'dpos',
-                  'chunksize','v_drift_EL', 'z_half_EL')
+                  'chunksize','v_drift_EL', 'z_half_EL', 't_res')
     vars_values = (n_bb_files, n_bb_events_per_file, n_panels, n_sensors, dtheta, dpos,
-                   chunksize, v_drift_EL, z_half_EL)
+                   chunksize, v_drift_EL, z_half_EL, t_res)
 
     setup.create_or_update_global_variable(global_vars, vars_names, vars_values, verbose = False)
     setup.create_or_update_global_variable(globals(), vars_names, vars_values, verbose = False)
@@ -227,15 +230,18 @@ def create_s2_signal(s2_table, list_of_bb_file_paths, output_file_path, EL_ON = 
 
     file_index = 10**(int(math.log10(n_bb_events_per_file)) + 1)
 
-    for ii, bb_file_path in enumerate(list_of_bb_file_paths):
+    bin_width = t_res # [ns]
 
-        bb_sns_pos, bb_sns_res = setup.read_fiber_sens(bb_file_path)
+    # Open the HDF5 file in write mode
+    with h5py.File(output_file_path, 'w') as file:
 
-        build_sensors_dict(bb_sns_pos)
+        for ii, bb_file_path in enumerate(list_of_bb_file_paths):
 
-        start = 0
-        # Open the HDF5 file in write mode
-        with h5py.File(output_file_path, 'w') as file:
+            bb_sns_pos, bb_sns_res = setup.read_fiber_sens(bb_file_path)
+
+            build_sensors_dict(bb_sns_pos)
+
+            start = 0
 
             for event in range(n_bb_events_per_file):
 
@@ -246,16 +252,19 @@ def create_s2_signal(s2_table, list_of_bb_file_paths, output_file_path, EL_ON = 
 
                     build_particle_dict(bb_ie)
 
-                    z_ie = np.array(list(zz_dict.values()))
-                    time_data = np.array(list(tt_dict.values()))
+                    z_ie = np.array(list(zz_dict.values())) # [mm]
+                    time_data = np.array(list(tt_dict.values())) # [ns]
 
-                    t_delay = (z_ie - z_half_EL)/v_drift_EL
+                    t_delay = (z_ie - z_half_EL)/v_drift_EL # [ns]
 
-                    time_data = time_data + t_delay
+                    time_data = time_data + t_delay # [ns]
 
-                    prim_e_x = prim_e.initial_x.values[0]
-                    prim_e_y = prim_e.initial_y.values[0]
-                    prim_e_r = np.sqrt(prim_e_x**2 + prim_e_y**2)
+                    bin_edges = np.arange(time_data.min() - bin_width, time_data.max() + 2*bin_width, bin_width)
+                    t_values = (bin_edges[:-1] + bin_edges[1:])/2
+
+                    prim_e_x = prim_e.initial_x.values[0] # [mm]
+                    prim_e_y = prim_e.initial_y.values[0] # [mm]
+                    prim_e_r = np.sqrt(prim_e_x**2 + prim_e_y**2) # [mm]
 
                     for jj, sens_id in enumerate(bb_sns_pos.sensor_id[:]):
 
@@ -266,9 +275,13 @@ def create_s2_signal(s2_table, list_of_bb_file_paths, output_file_path, EL_ON = 
 
                         s2_data = find_s2(sens_id, bb_ie['particle_id'])
 
+                        # Create a histogram
+                        s2_values, _ = np.histogram(time_data, bins=bin_edges,
+                                                              weights = s2_data)
+
 
                         # Create the DataFrame after the loop using a dictionary
-                        table_data = pd.DataFrame({'time': time_data, 's2': s2_data,
+                        table_data = pd.DataFrame({'time': t_values, 's2': s2_values,
                                                 #    'prim_e_x':prim_e_x, 'prim_e_y':prim_e_y,
                                                    'prim_e_r':prim_e_r
                                                    })

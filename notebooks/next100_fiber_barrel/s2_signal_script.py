@@ -23,9 +23,14 @@ s2_table = setup.read_s2_table(s2_table_path)
 
 # bb events
 # bb_file_path = os.path.join(path, "next100_fibers/20240122_Next100_bb_1.next.h5") # 1 full bb w s2
-bb_file_path = os.path.join(path, "next100_fibers/20240111_Next100_bb_3.next.h5") # 200
+# bb_file_path = os.path.join(path, "next100_fibers/20240111_Next100_bb_3.next.h5") # 200
 
-list_of_bb_file_paths = [bb_file_path]
+# list_of_bb_file_paths = [bb_file_path]
+list_of_bb_file_paths = []
+n_bb_files = 10
+for i in range(n_bb_files):
+    bb_file_path = os.path.join(path, f'20240306_Next100_200ev_ELoff_bb_{i+1}.next.h5')
+    list_of_bb_file_paths.append(bb_file_path)
 
 # ________________________________________________________________________________________________________________
 # Global params
@@ -36,7 +41,6 @@ n_sensors = 90
 
 v_drift_EL = 2.5e-3 # [mm]/[ns] = 2.5 [mm]/[us]
 
-n_bb_files = 1
 n_bb_events_per_file = 200
 
 output_file_path = os.path.join(path, '20240226_bb0nu_200ev_s2_signal.h5')

@@ -3,6 +3,16 @@
 
 from import_modules import *
 
+def create_gif(image_names, gif_name):
+    """
+    Function to create GIF
+    """
+    
+    images = []
+    for img_name in image_names:
+        images.append(Image.open(img_name + ".png"))
+    images[0].save(gif_name + ".gif", save_all=True, append_images=images[1:], loop=0, duration=500)
+
 
 def check_h5(file_path):
     """
