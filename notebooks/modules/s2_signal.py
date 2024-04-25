@@ -374,6 +374,8 @@ def create_s2_signal(s2_table, sns_path, list_of_bb_file_paths, output_file_path
                         # Sample: Filter data
                         samplin_rate_in_ns = 25 # [ns]
                         dt = time_data[1] - time_data[0] # [ns]
+                        dt = time_data[2] - time_data[1] # [ns]
+                        print(np.diff(sorted(time_data)), dt)
                         samplin_step = int(samplin_rate_in_ns//dt)
 
                         s2_data_shaped_sampled = s2_data_shaped[::samplin_step]
@@ -391,7 +393,8 @@ def create_s2_signal(s2_table, sns_path, list_of_bb_file_paths, output_file_path
                         # sensor_data['time_in_ns'] = np.array(t_values) # [ns]
                         sensor_data['s2_in_pes'] = s2_values # [pes]
                         sensor_data['prim_e_r_in_mm'] = prim_e_r # [mm]
-                        sensor_data['bin_width_in_ns'] = bin_width # [ns]
+                        sensor_data['samplin_rate_in_ns'] = samplin_rate_in_ns # [ns]
+                        # sensor_data['bin_width_in_ns'] = bin_width # [ns]
 
                         for data_key, values in sensor_data.items():
                             sensor_group.create_dataset(data_key, data=values)

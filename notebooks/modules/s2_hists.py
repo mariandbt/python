@@ -273,7 +273,8 @@ def print_offline_s2waveform(offline_s2_file_path, event, sensor, t0_in_us = 0, 
                 signal = event_group[sens_key]
                 s2 = s2 + np.array(signal['s2_in_pes']) # [pes]
 
-            samplin_rate = np.array(signal['bin_width_in_ns'])*1e-3 # [us]
+            # samplin_rate = np.array(signal['bin_width_in_ns'])*1e-3 # [us]
+            samplin_rate = np.array(signal['samplin_rate_in_ns'])*1e-3 # [us]
             t = t0_in_us + np.arange(0, len(s2)*samplin_rate, samplin_rate)
             # t = np.array(signal['time_in_ns'])*1e-3 # [us]
             sens = 'all sensors'
@@ -284,7 +285,8 @@ def print_offline_s2waveform(offline_s2_file_path, event, sensor, t0_in_us = 0, 
             # Get and print the value corresponding to the current subkey
             signal = event_group[sens]
             s2 = np.array(signal['s2_in_pes']) # [pes]
-            samplin_rate = np.array(signal['bin_width_in_ns'])*1e-3 # [us]
+            # samplin_rate = np.array(signal['bin_width_in_ns'])*1e-3 # [us]
+            samplin_rate = np.array(signal['samplin_rate_in_ns'])*1e-3 # [us]
             t = t0_in_us + np.arange(0, len(s2)*samplin_rate, samplin_rate)
             # t = np.array(signal['time_in_ns'])*1e-3 # [us]
 
