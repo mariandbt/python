@@ -46,6 +46,26 @@ def set_global_parameters(global_vars, n_bb_files=None, n_bb_events_per_file=Non
 
     print("Global parameters set successfully :)")
 
+def sipm_response(q_in_pes, t, t0):
+
+    """
+    NOTE: units of t, t0, tau and (tau * rise_time) must be the same
+    """
+    # SiPM response parameters
+    # tau = 20   # [ns] Decay time constant
+    tau = 80   # [ns] Decay time constant
+    rise_time = 1 # Rise time constant
+
+    rise_term = 1 - np.exp(-(t - t0) / (tau * rise_time))
+    decay_term = np.exp(-(t - t0) / tau)
+
+    signal = (rise_term * decay_term)
+    signal[t<t0] = 0
+    signal_area = signal.sum() or 1
+
+    normalized_signal = q_in_pes*signal/signal_area
+
+    return normalized_signal
 
 def set_s2_table_specs(s2_table):
 
@@ -223,7 +243,77 @@ find_s2 = np.vectorize(find_s2) # Vectorize the function
 
 
 
-def create_s2_signal(s2_table, list_of_bb_file_paths, output_file_path, EL_ON = False):
+# def create_s2_signal(s2_table, sns_path, list_of_bb_file_paths, output_file_path, EL_ON = False):
+#
+#     set_s2_table_specs(s2_table)
+#     build_s2_tab_dict(s2_table)
+#
+#     file_index = 10**(int(math.log10(n_bb_events_per_file)) + 1)
+#
+#     bin_width = t_res # [ns]
+#
+#     # Open the HDF5 file in write mode
+#     with h5py.File(output_file_path, 'w') as file:
+#
+#         for ii, bb_file_path in enumerate(list_of_bb_file_paths):
+#
+#             bb_sns_pos, _ = setup.read_fiber_sens(sns_path)
+#
+#             build_sensors_dict(bb_sns_pos)
+#
+#             start = 0
+#
+#             for event in range(n_bb_events_per_file):
+#
+#                 start, bb_ie, prim_e = find_bb_ie(bb_file_path, start, event)
+#
+#                 if len(bb_ie) > 0:
+#                     group = file.create_group(str(file_index*ii + event))
+#
+#                     build_particle_dict(bb_ie)
+#
+#                     z_ie = np.array(list(zz_dict.values())) # [mm]
+#                     time_data = np.array(list(tt_dict.values())) # [ns]
+#
+#                     t_delay = (z_ie - z_half_EL)/v_drift_EL # [ns]
+#
+#                     time_data = time_data + t_delay # [ns]
+#
+#                     bin_edges = np.arange(time_data.min() - bin_width, time_data.max() + 2*bin_width, bin_width)
+#                     t_values = (bin_edges[:-1] + bin_edges[1:])/2
+#
+#                     prim_e_x = prim_e.initial_x.values[0] # [mm]
+#                     prim_e_y = prim_e.initial_y.values[0] # [mm]
+#                     prim_e_r = np.sqrt(prim_e_x**2 + prim_e_y**2) # [mm]
+#
+#                     for jj, sens_id in enumerate(bb_sns_pos.sensor_id[:]):
+#
+#                         if (((jj+1)%10 == 0) or jj == 0):
+#                             print(f'Sensor {jj+1}/{n_sensors}; Event {event+1}/{n_bb_events_per_file}; File {ii+1}/{n_bb_files}')
+#
+#                         table_id = f'sens_{sens_id}'
+#
+#                         s2_data = find_s2(sens_id, bb_ie['particle_id'])
+#
+#                         # Create a histogram
+#                         s2_values, _ = np.histogram(time_data, bins=bin_edges,
+#                                                               weights = s2_data)
+#
+#
+#                         # Create the DataFrame after the loop using a dictionary
+#                         table_data = pd.DataFrame({'time': t_values, 's2': s2_values,
+#                                                 #    'prim_e_x':prim_e_x, 'prim_e_y':prim_e_y,
+#                                                    'prim_e_r':prim_e_r
+#                                                    })
+#
+#                         group.create_dataset(table_id, data=table_data)
+#
+#     print('Done! s2 signal created :)')
+
+
+
+
+def create_s2_signal(s2_table, sns_path, list_of_bb_file_paths, output_file_path, EL_ON = False):
 
     set_s2_table_specs(s2_table)
     build_s2_tab_dict(s2_table)
@@ -237,7 +327,7 @@ def create_s2_signal(s2_table, list_of_bb_file_paths, output_file_path, EL_ON = 
 
         for ii, bb_file_path in enumerate(list_of_bb_file_paths):
 
-            bb_sns_pos, bb_sns_res = setup.read_fiber_sens(bb_file_path)
+            bb_sns_pos, _ = setup.read_fiber_sens(sns_path)
 
             build_sensors_dict(bb_sns_pos)
 
@@ -248,7 +338,7 @@ def create_s2_signal(s2_table, list_of_bb_file_paths, output_file_path, EL_ON = 
                 start, bb_ie, prim_e = find_bb_ie(bb_file_path, start, event)
 
                 if len(bb_ie) > 0:
-                    group = file.create_group(str(file_index*ii + event))
+                    event_group = file.create_group(str(file_index*ii + event))
 
                     build_particle_dict(bb_ie)
 
@@ -260,7 +350,7 @@ def create_s2_signal(s2_table, list_of_bb_file_paths, output_file_path, EL_ON = 
                     time_data = time_data + t_delay # [ns]
 
                     bin_edges = np.arange(time_data.min() - bin_width, time_data.max() + 2*bin_width, bin_width)
-                    t_values = (bin_edges[:-1] + bin_edges[1:])/2
+                    # t_values = (bin_edges[:-1] + bin_edges[1:])/2
 
                     prim_e_x = prim_e.initial_x.values[0] # [mm]
                     prim_e_y = prim_e.initial_y.values[0] # [mm]
@@ -268,24 +358,34 @@ def create_s2_signal(s2_table, list_of_bb_file_paths, output_file_path, EL_ON = 
 
                     for jj, sens_id in enumerate(bb_sns_pos.sensor_id[:]):
 
+                        sensor_group = event_group.create_group(f'sens_{sens_id}')
+
                         if (((jj+1)%10 == 0) or jj == 0):
                             print(f'Sensor {jj+1}/{n_sensors}; Event {event+1}/{n_bb_events_per_file}; File {ii+1}/{n_bb_files}')
 
-                        table_id = f'sens_{sens_id}'
+                        # table_id = f'sens_{sens_id}'
 
                         s2_data = find_s2(sens_id, bb_ie['particle_id'])
 
+                        # Shaping
+                        generic_sipm_response = sipm_response(1, time_data, time_data.mean())
+                        s2_data_shaped = np.convolve(s2_data, generic_sipm_response, mode='same')
+
                         # Create a histogram
-                        s2_values, _ = np.histogram(time_data, bins=bin_edges,
-                                                              weights = s2_data)
+                        s2_values, _ = np.histogram(time_data,
+                                                    bins=bin_edges,
+                                                    weights = s2_data_shaped)
+                                                    # weights = s2_data)
 
 
-                        # Create the DataFrame after the loop using a dictionary
-                        table_data = pd.DataFrame({'time': t_values, 's2': s2_values,
-                                                #    'prim_e_x':prim_e_x, 'prim_e_y':prim_e_y,
-                                                   'prim_e_r':prim_e_r
-                                                   })
+                        # Create the dictionary after the loop
+                        sensor_data = {}
+                        # sensor_data['time_in_ns'] = np.array(t_values) # [ns]
+                        sensor_data['s2_in_pes'] = s2_values # [pes]
+                        sensor_data['prim_e_r_in_mm'] = prim_e_r # [mm]
+                        sensor_data['bin_width_in_ns'] = bin_width # [ns]
 
-                        group.create_dataset(table_id, data=table_data)
+                        for data_key, values in sensor_data.items():
+                            sensor_group.create_dataset(data_key, data=values)
 
     print('Done! s2 signal created :)')

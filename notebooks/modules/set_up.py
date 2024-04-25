@@ -7,7 +7,7 @@ def create_gif(image_names, gif_name):
     """
     Function to create GIF
     """
-    
+
     images = []
     for img_name in image_names:
         images.append(Image.open(img_name + ".png"))
@@ -67,6 +67,25 @@ def read_s2_table(s2_table_path):
             s2_table[table_id].rename(columns = columns, inplace=True)
 
     return s2_table
+
+
+def read_s2_map(s2_map_path):
+    # Initialize an empty dictionary to store the data
+    s2_map = {}
+
+
+    with h5py.File(s2_map_path, 'r') as f:
+        # Iterate over the groups in the HDF5 file
+        for key in f.keys():
+            s2_map[key] = {}
+            group = f[key]
+
+            # Iterate over the datasets in each group
+            for sub_key in group.keys():
+                s2_map[key][sub_key] = np.array(group[sub_key])
+
+    return s2_map
+
 
 def print_sens_geometry(file_path, selected_sens = None):
 

@@ -3,6 +3,7 @@
 from import_modules import *
 
 import set_up as setup
+import s2_signal as s2sig
 
 def get_globals():
     return globals()
@@ -13,6 +14,7 @@ def set_global_parameters(global_vars, t_binnin_in_ns=None, fiducial_radio_in_mm
         t_binnin_in_ns = int(input("Specify the time binning used in the simulation: "))
     if fiducial_radio_in_mm is None:
         fiducial_radio_in_mm = int(input("Specify the fiducial radio in mm cut to use: "))
+
 
     # Set global variables
     vars_names = ('t_binnin', 'fiducial_radio')
@@ -59,8 +61,8 @@ def build_offline_s2_max_dict(offline_s2_file_path, bin_width_in_us = 1):
 
                 # print(signal.r[0])
 
-                t = signal.time
-                s2 = signal.s2
+                t = signal.time # [ns]
+                s2 = signal.s2 # [pes]
                 prim_e_r = signal.r[0]
 
                 if prim_e_r > fiducial_radio:
@@ -72,7 +74,14 @@ def build_offline_s2_max_dict(offline_s2_file_path, bin_width_in_us = 1):
                 hist_values, bin_edges = np.histogram(t, bins=binin,
                                                       weights = s2)
 
-                s2_max.append(hist_values.max()) # peak of s2 signal per sensor
+                # Shaping
+                tt = (binin[:-1] + binin[1:])/2 # [ns]
+
+                generic_response = s2sig.sipm_response(1, tt, tt.mean())
+                convolution_response_wvf = np.convolve(hist_values, generic_response, mode='same')
+
+                # s2_max.append(hist_values.max()) # peak of s2 signal per sensor
+                s2_max.append(convolution_response_wvf.max()) # peak of s2 signal per sensor
 
 
             if prim_e_r > fiducial_radio:
@@ -93,7 +102,7 @@ def print_online_s2waveform(sns_response, event, sensor,
                             t_window_min_in_us = 400, t_window_max_in_us = 1000,
                             new_figure = True, comment = ''):
 
-    font_size = 15
+    font_size = 22
 
     if new_figure:
         fig, ax = plt.subplots(nrows = 1, ncols = 1, figsize=(7, 7), constrained_layout=True) # Create a new figure
@@ -136,10 +145,10 @@ def print_online_s2waveform(sns_response, event, sensor,
                                  weights = online_s2,
                                  density=False,
                                  histtype='step',
-                                 label = f'Online s2 of event {event} in {sensor} (simulation readout) {comment}'
+                                 label = f'Online s2 (simulation readout) {comment}'
                                 )
 
-    ax.set_title(f's2 waveform for sensor {sensor}', fontsize = font_size);
+    ax.set_title(f's2 waveform of event {event} for sensor {sensor}', fontsize = font_size);
     ax.set_xlabel('Time [us]', fontsize = font_size);
     ax.set_ylabel('Signal [pes]', fontsize = font_size);
 
@@ -147,7 +156,7 @@ def print_online_s2waveform(sns_response, event, sensor,
 
     return events, bins, ax
 
-def print_offline_s2waveform(offline_s2_file_path, event, sensor, bin_width_in_us = 1, new_figure = True, comment = ''):
+def OLD_print_offline_s2waveform(offline_s2_file_path, event, sensor, bin_width_in_us = 1, new_figure = True, comment = ''):
 
     if new_figure:
         fig, ax = plt.subplots(nrows = 1, ncols = 1, figsize=(7, 7), constrained_layout=True) # Create a new figure
@@ -159,7 +168,7 @@ def print_offline_s2waveform(offline_s2_file_path, event, sensor, bin_width_in_u
         else:
             fig, ax = plt.subplots(nrows = 1, ncols = 1, figsize=(7, 7), constrained_layout=True)
 
-    font_size = 15
+    font_size = 22
     ev = f'{event}'
     sens = f'sens_{sensor}'
 
@@ -213,7 +222,84 @@ def print_offline_s2waveform(offline_s2_file_path, event, sensor, bin_width_in_u
 #                                  histtype='step',
                                  histtype='stepfilled',
                                  alpha = 0.5,
-                                 label = f'Offline s2 of event {ev} in {sens} (using maps) {comment}'
+                                 label = f'Offline s2 (using maps) {comment}'
+                                )
+
+    ax.set_title(f's2 of event {ev} in {sens}', fontsize = font_size);
+    ax.set_xlabel('Time [us]', fontsize = font_size);
+    ax.set_ylabel('Signal [pes]', fontsize = font_size);
+
+    ax.tick_params(axis='both', labelsize = font_size*2/3)
+
+    return events, bins, ax
+
+def print_offline_s2waveform(offline_s2_file_path, event, sensor, t0_in_us = 0, bin_width_in_us = 1, new_figure = True, comment = ''):
+
+    if new_figure:
+        fig, ax = plt.subplots(nrows = 1, ncols = 1, figsize=(7, 7), constrained_layout=True) # Create a new figure
+
+    else:
+        # Check if there's an existing figure and create it if there's none
+        if plt.gcf().get_axes():
+            ax = plt.gcf().get_axes()[0]
+        else:
+            fig, ax = plt.subplots(nrows = 1, ncols = 1, figsize=(7, 7), constrained_layout=True)
+
+    font_size = 22
+    ev = f'{event}'
+    sens = f'sens_{sensor}'
+
+
+    # columns = {0:'time',
+    #            1:'s2',
+    #            2:'prim_e_r',
+    #            3:'bin_width'
+    #           }
+
+
+    # Open the HDF5 file in read mode
+    with h5py.File(offline_s2_file_path, 'r') as file:
+
+        # Get the group corresponding to the current key
+        event_group = file[ev]
+
+        if sensor == all:
+            # Get a list of all keys (sensor names) in the group
+            sensor_keys = list(event_group.keys())
+            s2 = 0
+
+            # Use list comprehension to get all datasets (signals) for all sensors in the group
+            for sens_key in sensor_keys:
+                signal = event_group[sens_key]
+                s2 = s2 + np.array(signal['s2_in_pes']) # [pes]
+
+            samplin_rate = np.array(signal['bin_width_in_ns'])*1e-3 # [us]
+            t = t0_in_us + np.arange(0, len(s2)*samplin_rate, samplin_rate)
+            # t = np.array(signal['time_in_ns'])*1e-3 # [us]
+            sens = 'all sensors'
+
+
+        else:
+
+            # Get and print the value corresponding to the current subkey
+            signal = event_group[sens]
+            s2 = np.array(signal['s2_in_pes']) # [pes]
+            samplin_rate = np.array(signal['bin_width_in_ns'])*1e-3 # [us]
+            t = t0_in_us + np.arange(0, len(s2)*samplin_rate, samplin_rate)
+            # t = np.array(signal['time_in_ns'])*1e-3 # [us]
+
+    # bin_width = bin_width_in_us # time units ([us])
+    bin_width = bin_width_in_us # time units ([us])
+
+    binin = np.arange(t.min() - bin_width, t.max() + 2*bin_width, bin_width)
+
+    events, bins, bars = ax.hist(t, binin,
+                                 weights = s2,
+                                 density=False,
+#                                  histtype='step',
+                                 histtype='stepfilled',
+                                 alpha = 0.5,
+                                 label = f'Offline s2 (using maps) {comment}'
                                 )
 
     ax.set_title(f's2 of event {ev} in {sens}', fontsize = font_size);

@@ -238,6 +238,60 @@ def print_response_maps(selected_sens, maps, yield_):
     fig.suptitle(f'Maps for sens_{selected_sens}', fontsize = 1.5*font_size);
 
 
+def print_entries_map(selected_sens, s2_entries_map):
+
+    fig, ax = plt.subplots(nrows = 1, ncols = 1, figsize=(10, 4.5), constrained_layout=True)
+
+    font_size = 22
+    offset = 0.
+
+    xedges = s2_entries_map[str(selected_sens)]['bins_x']
+    yedges = s2_entries_map[str(selected_sens)]['bins_y']
+    entries_map = s2_entries_map[str(selected_sens)]['map']
+
+
+    the_map = ax.pcolormesh(xedges, yedges, entries_map.T, cmap='inferno');
+
+    fig.colorbar(the_map, ax = ax)
+    ax.set_title(r'$N_{events}$ per bin [counts]', fontsize = font_size);
+
+    ax.set_xlim(xedges.min() - offset, xedges.max() + offset)
+    ax.set_ylim([yedges.min() - offset, yedges.max() + offset])
+
+
+    ax.set_xlabel('X-coordinate [mm]', fontsize = font_size)
+    ax.set_ylabel('Y-coordinate [mm]', fontsize = font_size)
+    ax.tick_params(axis='both', labelsize = font_size*2/3)
+
+
+
+def print_error_map(selected_sens, s2_error_map):
+
+    fig, ax = plt.subplots(nrows = 1, ncols = 1, figsize=(10, 4.5), constrained_layout=True)
+
+    font_size = 22
+    offset = 0.
+
+    xedges = s2_error_map[str(selected_sens)]['bins_x']
+    yedges = s2_error_map[str(selected_sens)]['bins_y']
+    error_map = s2_error_map[str(selected_sens)]['map']
+
+
+    the_map = ax.pcolormesh(xedges, yedges, error_map.T, cmap='inferno');
+
+    fig.colorbar(the_map, ax = ax)
+    ax.set_title(r'$\Delta\mu$ of the detected charge [%]', fontsize = font_size);
+
+    ax.set_xlim(xedges.min() - offset, xedges.max() + offset)
+    ax.set_ylim([yedges.min() - offset, yedges.max() + offset])
+
+
+    ax.set_xlabel('X-coordinate [mm]', fontsize = font_size)
+    ax.set_ylabel('Y-coordinate [mm]', fontsize = font_size)
+    ax.tick_params(axis='both', labelsize = font_size*2/3)
+
+
+
 def create_s2_table(list_of_ie_file_paths, s2_table_id):
 
     s2_dict = {}
