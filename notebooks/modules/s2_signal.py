@@ -53,7 +53,7 @@ def sipm_response(q_in_pes, t, t0):
     """
     # SiPM response parameters
     # tau = 20   # [ns] Decay time constant
-    tau = 80   # [ns] Decay time constant
+    tau = 200   # [ns] Decay time constant
     rise_time = 1 # Rise time constant
 
     rise_term = 1 - np.exp(-(t - t0) / (tau * rise_time))
@@ -371,11 +371,19 @@ def create_s2_signal(s2_table, sns_path, list_of_bb_file_paths, output_file_path
                         generic_sipm_response = sipm_response(1, time_data, time_data.mean())
                         s2_data_shaped = np.convolve(s2_data, generic_sipm_response, mode='same')
 
-                        # Create a histogram
-                        s2_values, _ = np.histogram(time_data,
-                                                    bins=bin_edges,
-                                                    weights = s2_data_shaped)
-                                                    # weights = s2_data)
+                        # Sample: Filter data
+                        samplin_rate_in_ns = 25 # [ns]
+                        dt = time_data[1] - time_data[0] # [ns]
+                        samplin_step = int(samplin_rate_in_ns//dt)
+
+                        s2_data_shaped_sampled = s2_data_shaped[::samplin_step]
+                        s2_values = s2_data_shaped_sampled
+                        
+                        # Integrate: Create a histogram
+                        # s2_values, _ = np.histogram(time_data,
+                        #                             bins=bin_edges,
+                        #                             weights = s2_data_shaped)
+                        #                             # weights = s2_data)
 
 
                         # Create the dictionary after the loop

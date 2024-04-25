@@ -25,15 +25,15 @@ s2_table = setup.read_s2_table(s2_table_path)
 sns_path = os.path.join(path, "ie/20240405_Next100_ie_s2_1.next.h5")
 
 # bb events
-# bb_file_path = os.path.join(path, "bb/20240228_Next100_10ev_ELon_bb_1.next.h5") # 10 full bb w s2
-# list_of_bb_file_paths = [bb_file_path]
-# n_bb_files = len(list_of_bb_file_paths)
+bb_file_path = os.path.join(path, "bb/20240228_Next100_10ev_ELon_bb_1.next.h5") # 10 full bb w s2
+list_of_bb_file_paths = [bb_file_path]
+n_bb_files = len(list_of_bb_file_paths)
 
-list_of_bb_file_paths = []
-n_bb_files = 10
-for i in range(n_bb_files):
-    bb_file_path = os.path.join(path, f'20240306_Next100_200ev_ELoff_bb_{i+1}.next.h5')
-    list_of_bb_file_paths.append(bb_file_path)
+# list_of_bb_file_paths = []
+# n_bb_files = 10
+# for i in range(n_bb_files):
+#     bb_file_path = os.path.join(path, f'20240306_Next100_200ev_ELoff_bb_{i+1}.next.h5')
+#     list_of_bb_file_paths.append(bb_file_path)
 
 # ________________________________________________________________________________________________________________
 # Global params
