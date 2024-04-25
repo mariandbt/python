@@ -44,10 +44,10 @@ n_sensors = 108
 
 v_drift_EL = 2.5e-3 # [mm]/[ns] = 2.5 [mm]/[us]
 
-n_bb_events_per_file = 200
-# n_bb_events_per_file = 3
+# n_bb_events_per_file = 200
+n_bb_events_per_file = 3
 
-output_file_path = os.path.join(path, 's2signals/20240423_TEST3shaped_bb0nu_10ev_ELon_s2_signal_20240405s2table.h5')
+output_file_path = os.path.join(path, 's2signals/20240423_TEST6shaped_bb0nu_10ev_ELon_s2_signal_20240405s2table.h5')
 
 # ________________________________________________________________________________________________________________
 
