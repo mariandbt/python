@@ -28,75 +28,6 @@ def set_global_parameters(global_vars, t_binnin_in_ns=None, fiducial_radio_in_mm
     print("Global parameters set successfully :)")
 
 
-def build_offline_s2_max_dict(offline_s2_file_path, bin_width_in_us = 1):
-
-    # Max value of the s2 signals dictionary building
-
-    columns = {0:'time',
-               1:'s2',
-               2:'r'
-              }
-
-    bin_width = bin_width_in_us*1000 # [ns] = 1 [us]
-    s2_max_dict = {} # max s2 peak per event
-    prim_e_r_dict = {} # radial coordinate of each event
-
-    # Open the HDF5 file in read mode
-    with h5py.File(offline_s2_file_path, 'r') as file:
-        # Iterate through the top-level keys (groups) in the HDF5 file
-        for event in file.keys():
-            # Get the group corresponding to the current event
-            group = file[event]
-            s2_max = []
-
-            print(f'Event {event} processed')
-
-            # Iterate through the sensors (datasets) in the current group
-            for sensor in group.keys():
-
-                # Get and print the value corresponding to the current sensor
-                signal = group[sensor][()]
-                signal = pd.DataFrame(signal)
-                signal.rename(columns = columns, inplace=True)
-
-                # print(signal.r[0])
-
-                t = signal.time # [ns]
-                s2 = signal.s2 # [pes]
-                prim_e_r = signal.r[0]
-
-                if prim_e_r > fiducial_radio:
-                    continue
-
-                binin = np.arange(t.min() - bin_width, t.max() + 2*bin_width, bin_width)
-
-                # Create a histogram
-                hist_values, bin_edges = np.histogram(t, bins=binin,
-                                                      weights = s2)
-
-                # Shaping
-                tt = (binin[:-1] + binin[1:])/2 # [ns]
-
-                generic_response = s2sig.sipm_response(1, tt, tt.mean())
-                convolution_response_wvf = np.convolve(hist_values, generic_response, mode='same')
-
-                # s2_max.append(hist_values.max()) # peak of s2 signal per sensor
-                s2_max.append(convolution_response_wvf.max()) # peak of s2 signal per sensor
-
-
-            if prim_e_r > fiducial_radio:
-                print('Discarded event by fiducial cut')
-                continue
-            s2_max_dict[event] = max(s2_max) # max s2 peak from all sensors
-            prim_e_r_dict[event] = prim_e_r # radial coordinate of each event
-
-        n_sensors = len(group.keys()) # all events have all sensors, just get the last one
-
-    setup.create_or_update_global_variable(globals(), 'n_sensors', n_sensors, verbose = True)
-
-    return s2_max_dict, prim_e_r_dict
-
-
 def print_online_s2waveform(sns_response, event, sensor,
                             bin_width_in_us = 1,
                             t_window_min_in_us = 400, t_window_max_in_us = 1000,
@@ -156,7 +87,7 @@ def print_online_s2waveform(sns_response, event, sensor,
 
     return events, bins, ax
 
-def OLD_print_offline_s2waveform(offline_s2_file_path, event, sensor, bin_width_in_us = 1, new_figure = True, comment = ''):
+def reallyOLD_print_offline_s2waveform(offline_s2_file_path, event, sensor, bin_width_in_us = 1, new_figure = True, comment = ''):
 
     if new_figure:
         fig, ax = plt.subplots(nrows = 1, ncols = 1, figsize=(7, 7), constrained_layout=True) # Create a new figure
@@ -233,7 +164,7 @@ def OLD_print_offline_s2waveform(offline_s2_file_path, event, sensor, bin_width_
 
     return events, bins, ax
 
-def print_offline_s2waveform(offline_s2_file_path, event, sensor, t0_in_us = 0, bin_width_in_us = 1, new_figure = True, comment = ''):
+def OLD_print_offline_s2waveform(offline_s2_file_path, event, sensor, t0_in_us = 0, bin_width_in_us = 1, new_figure = True, comment = ''):
 
     if new_figure:
         fig, ax = plt.subplots(nrows = 1, ncols = 1, figsize=(7, 7), constrained_layout=True) # Create a new figure
@@ -248,14 +179,6 @@ def print_offline_s2waveform(offline_s2_file_path, event, sensor, t0_in_us = 0, 
     font_size = 22
     ev = f'{event}'
     sens = f'sens_{sensor}'
-
-
-    # columns = {0:'time',
-    #            1:'s2',
-    #            2:'prim_e_r',
-    #            3:'bin_width'
-    #           }
-
 
     # Open the HDF5 file in read mode
     with h5py.File(offline_s2_file_path, 'r') as file:
@@ -273,8 +196,8 @@ def print_offline_s2waveform(offline_s2_file_path, event, sensor, t0_in_us = 0, 
                 signal = event_group[sens_key]
                 s2 = s2 + np.array(signal['s2_in_pes']) # [pes]
 
-            # samplin_rate = np.array(signal['bin_width_in_ns'])*1e-3 # [us]
-            samplin_rate = np.array(signal['samplin_rate_in_ns'])*1e-3 # [us]
+            samplin_rate = np.array(signal['bin_width_in_ns'])*1e-3 # [us]
+            # samplin_rate = np.array(signal['samplin_rate_in_ns'])*1e-3 # [us]
             t = t0_in_us + np.arange(0, len(s2)*samplin_rate, samplin_rate)
             # t = np.array(signal['time_in_ns'])*1e-3 # [us]
             sens = 'all sensors'
@@ -285,8 +208,8 @@ def print_offline_s2waveform(offline_s2_file_path, event, sensor, t0_in_us = 0, 
             # Get and print the value corresponding to the current subkey
             signal = event_group[sens]
             s2 = np.array(signal['s2_in_pes']) # [pes]
-            # samplin_rate = np.array(signal['bin_width_in_ns'])*1e-3 # [us]
-            samplin_rate = np.array(signal['samplin_rate_in_ns'])*1e-3 # [us]
+            samplin_rate = np.array(signal['bin_width_in_ns'])*1e-3 # [us]
+            # samplin_rate = np.array(signal['samplin_rate_in_ns'])*1e-3 # [us]
             t = t0_in_us + np.arange(0, len(s2)*samplin_rate, samplin_rate)
             # t = np.array(signal['time_in_ns'])*1e-3 # [us]
 
@@ -311,6 +234,189 @@ def print_offline_s2waveform(offline_s2_file_path, event, sensor, t0_in_us = 0, 
     ax.tick_params(axis='both', labelsize = font_size*2/3)
 
     return events, bins, ax
+
+def print_offline_s2waveform(offline_s2_file_path, event, sensor, t0_in_us = 0, samplin_rate_in_us = 1, new_figure = True, comment = ''):
+
+    if new_figure:
+        fig, ax = plt.subplots(nrows = 1, ncols = 1, figsize=(7, 7), constrained_layout=True) # Create a new figure
+
+    else:
+        # Check if there's an existing figure and create it if there's none
+        if plt.gcf().get_axes():
+            ax = plt.gcf().get_axes()[0]
+        else:
+            fig, ax = plt.subplots(nrows = 1, ncols = 1, figsize=(7, 7), constrained_layout=True)
+
+    font_size = 22
+    ev = f'{event}'
+    sens = f'sens_{sensor}'
+
+
+    # Open the HDF5 file in read mode
+    with h5py.File(offline_s2_file_path, 'r') as file:
+
+        # Get the group corresponding to the current key
+        event_group = file[ev]
+
+        if sensor == all:
+            # Get a list of all keys (sensor names) in the group
+            sensor_keys = list(event_group.keys())
+            s2 = 0
+
+            # Use list comprehension to get all datasets (signals) for all sensors in the group
+            for sens_key in sensor_keys:
+                signal = event_group[sens_key]
+                s2 = s2 + np.array(signal['s2_in_pes']) # [pes]
+
+            original_samplin_rate_in_us = np.array(signal['samplin_rate_in_ns'])*1e-3 # [us]
+            sens = 'all sensors'
+
+
+        else:
+
+            # Get and print the value corresponding to the current subkey
+            signal = event_group[sens]
+            s2 = np.array(signal['s2_in_pes']) # [pes]
+            original_samplin_rate_in_us = np.array(signal['samplin_rate_in_ns'])*1e-3 # [us]
+
+    
+    samplin_step = int(samplin_rate_in_us//original_samplin_rate_in_us)
+
+    s2_shaped_sampled  = s2[::samplin_step]
+    t_in_us = t0_in_us + np.arange(0, len(s2_shaped_sampled)*samplin_rate_in_us, samplin_rate_in_us)
+
+    ax.plot(t_in_us, s2_shaped_sampled, label = f'Sampling rate of [{samplin_rate_in_us}us] {comment}')
+
+
+    ax.set_title(f's2 of event {ev} in {sens}', fontsize = font_size);
+    ax.set_xlabel('Time [us]', fontsize = font_size);
+    ax.set_ylabel('Signal [pes]', fontsize = font_size);
+
+    ax.tick_params(axis='both', labelsize = font_size*2/3)
+
+    return s2_shaped_sampled, t_in_us, ax
+
+
+# def OLD_build_offline_s2_max_dict(offline_s2_file_path, bin_width_in_us = 1):
+
+#     # Max value of the s2 signals dictionary building
+
+#     columns = {0:'time',
+#                1:'s2',
+#                2:'r'
+#               }
+
+#     bin_width = bin_width_in_us*1000 # [ns] = 1 [us]
+#     s2_max_dict = {} # max s2 peak per event
+#     prim_e_r_dict = {} # radial coordinate of each event
+
+#     # Open the HDF5 file in read mode
+#     with h5py.File(offline_s2_file_path, 'r') as file:
+#         # Iterate through the top-level keys (groups) in the HDF5 file
+#         for event in file.keys():
+#             # Get the group corresponding to the current event
+#             group = file[event]
+#             s2_max = []
+
+#             print(f'Event {event} processed')
+
+#             # Iterate through the sensors (datasets) in the current group
+#             for sensor in group.keys():
+
+#                 # Get and print the value corresponding to the current sensor
+#                 signal = group[sensor][()]
+#                 signal = pd.DataFrame(signal)
+#                 signal.rename(columns = columns, inplace=True)
+
+#                 # print(signal.r[0])
+
+#                 t = signal.time # [ns]
+#                 s2 = signal.s2 # [pes]
+#                 prim_e_r = signal.r[0]
+
+#                 if prim_e_r > fiducial_radio:
+#                     continue
+
+#                 binin = np.arange(t.min() - bin_width, t.max() + 2*bin_width, bin_width)
+
+#                 # Create a histogram
+#                 hist_values, bin_edges = np.histogram(t, bins=binin,
+#                                                       weights = s2)
+
+#                 # Shaping
+#                 tt = (binin[:-1] + binin[1:])/2 # [ns]
+
+#                 generic_response = s2sig.sipm_response(1, tt, tt.mean())
+#                 convolution_response_wvf = np.convolve(hist_values, generic_response, mode='same')
+
+#                 # s2_max.append(hist_values.max()) # peak of s2 signal per sensor
+#                 s2_max.append(convolution_response_wvf.max()) # peak of s2 signal per sensor
+
+
+#             if prim_e_r > fiducial_radio:
+#                 print('Discarded event by fiducial cut')
+#                 continue
+#             s2_max_dict[event] = max(s2_max) # max s2 peak from all sensors
+#             prim_e_r_dict[event] = prim_e_r # radial coordinate of each event
+
+#         n_sensors = len(group.keys()) # all events have all sensors, just get the last one
+
+#     setup.create_or_update_global_variable(globals(), 'n_sensors', n_sensors, verbose = True)
+
+#     return s2_max_dict, prim_e_r_dict
+
+def build_offline_s2_max_dict(list_of_offline_s2_file_paths, samplin_rate_in_us = 1):
+
+    # Max value of the s2 signals dictionary building
+    s2_max_dict = {} # max s2 peak per event
+    prim_e_r_dict = {} # radial coordinate of each event
+    n_event = 0
+
+    for offline_s2_file_path in list_of_offline_s2_file_paths:
+        # Open the HDF5 file in read mode
+        with h5py.File(offline_s2_file_path, 'r') as file:
+            # Iterate through the top-level keys (groups) in the HDF5 file
+            for event in file.keys():
+                # Get the group corresponding to the current event
+                event_group = file[event]
+
+                s2_max = []
+
+                print(f'Event {event} processed')
+
+                # Iterate through the sensors (datasets) in the current group
+                for sensor in event_group.keys():
+
+                    # Get and print the value corresponding to the current sensor
+                    signal = event_group[sensor]
+
+                    prim_e_r = np.array(signal['prim_e_r_in_mm']) # [mm]
+                    s2 = np.array(signal['s2_in_pes']) # [pes]
+                    original_samplin_rate_in_us = np.array(signal['samplin_rate_in_ns'])*1e-3 # [us]
+
+                    if prim_e_r > fiducial_radio:
+                        continue
+
+                    samplin_step = int(samplin_rate_in_us//original_samplin_rate_in_us)
+
+                    s2_shaped_sampled  = s2[::samplin_step]
+                    s2_max.append(s2_shaped_sampled.max()) # peak of s2 signal per sensor
+
+
+                if prim_e_r > fiducial_radio:
+                    print('Discarded event by fiducial cut')
+                    continue
+
+                s2_max_dict[n_event] = max(s2_max) # max s2 peak from all sensors
+                prim_e_r_dict[n_event] = prim_e_r # radial coordinate of each event
+
+                n_event = n_event + 1
+
+            n_sensors = len(event_group.keys()) # all events have all sensors, just get the last one
+
+    setup.create_or_update_global_variable(globals(), 'n_sensors', n_sensors, verbose = True)
+
+    return s2_max_dict, prim_e_r_dict
 
 
 def print_dyn_range_hist(s2_max_dict, bin_width_in_pes = 250):
@@ -355,3 +461,4 @@ def print_dyn_range_hist(s2_max_dict, bin_width_in_pes = 250):
     ax.tick_params(axis='both', labelsize = font_size*2/3)
 
     return events, bins, ax
+

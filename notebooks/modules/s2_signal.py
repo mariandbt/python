@@ -11,7 +11,7 @@ import set_up as setup
 
 
 def set_global_parameters(global_vars, n_bb_files=None, n_bb_events_per_file=None, n_panels=None, n_sensors=None,
-                          v_drift_EL=None, t_resolution_in_ns = 25):
+                          v_drift_EL=None, geant4_t_binin_in_ns = None, samplin_rate_in_ns = None):
     # If parameters are not provided, ask the user for input
     if n_bb_files is None:
         n_bb_files = int(input("Specify the number of bb data files: "))
@@ -23,6 +23,10 @@ def set_global_parameters(global_vars, n_bb_files=None, n_bb_events_per_file=Non
         n_sensors = int(input("Specify the number of sensors: "))
     if v_drift_EL is None:
         v_drift_EL = input("Specify drift velocity of the EL region in [mm]/[ns]: ")
+    if geant4_t_binin_in_ns is None:
+        geant4_t_binin_in_ns = input("Specify time binning used in the Geant4 in [ns]: ")
+    if samplin_rate_in_ns is None:
+        samplin_rate_in_ns = input("Specify sampling rate in [ns]: ")
     # Add more parameters as needed
 
     dtheta = 2*np.pi/n_panels # rad
@@ -31,13 +35,11 @@ def set_global_parameters(global_vars, n_bb_files=None, n_bb_events_per_file=Non
     chunksize = int(2e5) # aprox length of an event to read the tables
     z_half_EL = -5.1 # [mm]
 
-    t_res = t_resolution_in_ns # [ns]
-
     # Set global variables
     vars_names = ('n_bb_files', 'n_bb_events_per_file', 'n_panels', 'n_sensors', 'dtheta', 'dpos',
-                  'chunksize','v_drift_EL', 'z_half_EL', 't_res')
+                  'chunksize','v_drift_EL', 'z_half_EL', 'geant4_t_binin_in_ns', 'samplin_rate_in_ns')
     vars_values = (n_bb_files, n_bb_events_per_file, n_panels, n_sensors, dtheta, dpos,
-                   chunksize, v_drift_EL, z_half_EL, t_res)
+                   chunksize, v_drift_EL, z_half_EL, geant4_t_binin_in_ns, samplin_rate_in_ns)
 
     setup.create_or_update_global_variable(global_vars, vars_names, vars_values, verbose = False)
     setup.create_or_update_global_variable(globals(), vars_names, vars_values, verbose = False)
@@ -52,8 +54,8 @@ def sipm_response(q_in_pes, t, t0):
     NOTE: units of t, t0, tau and (tau * rise_time) must be the same
     """
     # SiPM response parameters
-    # tau = 20   # [ns] Decay time constant
-    tau = 200   # [ns] Decay time constant
+    tau = 20   # [ns] Decay time constant
+    # tau = 200   # [ns] Decay time constant
     rise_time = 1 # Rise time constant
 
     rise_term = 1 - np.exp(-(t - t0) / (tau * rise_time))
@@ -250,7 +252,7 @@ find_s2 = np.vectorize(find_s2) # Vectorize the function
 #
 #     file_index = 10**(int(math.log10(n_bb_events_per_file)) + 1)
 #
-#     bin_width = t_res # [ns]
+#     bin_width = samplin_rate_in_ns # [ns]
 #
 #     # Open the HDF5 file in write mode
 #     with h5py.File(output_file_path, 'w') as file:
@@ -320,7 +322,7 @@ def create_s2_signal(s2_table, sns_path, list_of_bb_file_paths, output_file_path
 
     file_index = 10**(int(math.log10(n_bb_events_per_file)) + 1)
 
-    bin_width = t_res # [ns]
+    # bin_width = samplin_rate_in_ns # [ns]
 
     # Open the HDF5 file in write mode
     with h5py.File(output_file_path, 'w') as file:
@@ -349,7 +351,7 @@ def create_s2_signal(s2_table, sns_path, list_of_bb_file_paths, output_file_path
 
                     time_data = time_data + t_delay # [ns]
 
-                    bin_edges = np.arange(time_data.min() - bin_width, time_data.max() + 2*bin_width, bin_width)
+                    # bin_edges = np.arange(time_data.min() - bin_width, time_data.max() + 2*bin_width, bin_width)
                     # t_values = (bin_edges[:-1] + bin_edges[1:])/2
 
                     prim_e_x = prim_e.initial_x.values[0] # [mm]
@@ -360,26 +362,31 @@ def create_s2_signal(s2_table, sns_path, list_of_bb_file_paths, output_file_path
 
                         sensor_group = event_group.create_group(f'sens_{sens_id}')
 
-                        if (((jj+1)%10 == 0) or jj == 0):
+                        if (((jj+1)%1 == 0) or jj == 0):
                             print(f'Sensor {jj+1}/{n_sensors}; Event {event+1}/{n_bb_events_per_file}; File {ii+1}/{n_bb_files}')
 
                         # table_id = f'sens_{sens_id}'
 
                         s2_data = find_s2(sens_id, bb_ie['particle_id'])
 
+                        # s2 as deltas
+                        tail_in_ns = 500 # [ns]
+                        bin_edges = np.arange(time_data.min(), time_data.max() + tail_in_ns, geant4_t_binin_in_ns)
+                        s2_deltas, _ = np.histogram(time_data, bins=bin_edges, weights = s2_data)
+                        print('deltas DONE!')
+
                         # Shaping
-                        generic_sipm_response = sipm_response(1, time_data, time_data.mean())
-                        s2_data_shaped = np.convolve(s2_data, generic_sipm_response, mode='same')
+                        bin_means = (bin_edges[:-1] + bin_edges[1:])/2
+                        generic_sipm_response = sipm_response(1, bin_means, bin_means.mean())
+                        s2_data_shaped = np.convolve(s2_deltas, generic_sipm_response, mode='same')
+                        print('shapin DONE!')
 
                         # Sample: Filter data
-                        samplin_rate_in_ns = 25 # [ns]
-                        dt = time_data[1] - time_data[0] # [ns]
-                        dt = time_data[2] - time_data[1] # [ns]
-                        print(np.diff(sorted(time_data)), dt)
-                        samplin_step = int(samplin_rate_in_ns//dt)
+                        samplin_step = int(samplin_rate_in_ns//geant4_t_binin_in_ns)
 
                         s2_data_shaped_sampled = s2_data_shaped[::samplin_step]
                         s2_values = s2_data_shaped_sampled
+                        print('samplin DONE!')
                         
                         # Integrate: Create a histogram
                         # s2_values, _ = np.histogram(time_data,
@@ -389,12 +396,15 @@ def create_s2_signal(s2_table, sns_path, list_of_bb_file_paths, output_file_path
 
 
                         # Create the dictionary after the loop
+                        print('s2_in_pes max = ', s2_values.max(), 'prim_e_r = ', prim_e_r, 'samplin_rate_in_ns = ', samplin_rate_in_ns)
                         sensor_data = {}
                         # sensor_data['time_in_ns'] = np.array(t_values) # [ns]
                         sensor_data['s2_in_pes'] = s2_values # [pes]
                         sensor_data['prim_e_r_in_mm'] = prim_e_r # [mm]
+                        # sensor_data['bin_width_in_ns'] = samplin_rate_in_ns # [ns]
                         sensor_data['samplin_rate_in_ns'] = samplin_rate_in_ns # [ns]
                         # sensor_data['bin_width_in_ns'] = bin_width # [ns]
+
 
                         for data_key, values in sensor_data.items():
                             sensor_group.create_dataset(data_key, data=values)

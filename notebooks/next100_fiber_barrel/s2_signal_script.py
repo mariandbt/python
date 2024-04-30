@@ -45,9 +45,9 @@ n_sensors = 108
 v_drift_EL = 2.5e-3 # [mm]/[ns] = 2.5 [mm]/[us]
 
 # n_bb_events_per_file = 200
-n_bb_events_per_file = 3
+n_bb_events_per_file = 1
 
-output_file_path = os.path.join(path, 's2signals/20240423_TEST6shaped_bb0nu_10ev_ELon_s2_signal_20240405s2table.h5')
+output_file_path = os.path.join(path, 's2signals/20240423_TEST9shaped_bb0nu_10ev_ELon_s2_signal_20240405s2table.h5')
 
 # ________________________________________________________________________________________________________________
 
@@ -56,7 +56,9 @@ s2sig.set_global_parameters(globals(),
                             n_bb_events_per_file = n_bb_events_per_file,
                             n_panels = n_panels,
                             n_sensors = n_sensors,
-                            v_drift_EL = v_drift_EL
+                            v_drift_EL = v_drift_EL, 
+                            geant4_t_binin_in_ns = 0.1, 
+                            samplin_rate_in_ns = 25
                            )
 
 s2sig.create_s2_signal(s2_table, sns_path, list_of_bb_file_paths, output_file_path)
