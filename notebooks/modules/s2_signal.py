@@ -48,13 +48,12 @@ def set_global_parameters(global_vars, n_bb_files=None, n_bb_events_per_file=Non
 
     print("Global parameters set successfully :)")
 
-def sipm_response(q_in_pes, t, t0):
+def sipm_response(q_in_pes, t, t0, tau):
 
     """
     NOTE: units of t, t0, tau and (tau * rise_time) must be the same
     """
     # SiPM response parameters
-    tau = 20   # [ns] Decay time constant
     # tau = 200   # [ns] Decay time constant
     rise_time = 1 # Rise time constant
 
@@ -63,7 +62,7 @@ def sipm_response(q_in_pes, t, t0):
 
     signal = (rise_term * decay_term)
     signal[t<t0] = 0
-    signal_area = signal.sum() or 1
+    signal_area = np.trapz(x = t, y = signal) or 1
 
     normalized_signal = q_in_pes*signal/signal_area
 
@@ -344,12 +343,13 @@ def create_s2_signal(s2_table, sns_path, list_of_bb_file_paths, output_file_path
 
                     build_particle_dict(bb_ie)
 
-                    z_ie = np.array(list(zz_dict.values())) # [mm]
-                    time_data = np.array(list(tt_dict.values())) # [ns]
+                    z_ie = np.array(list(zz_dict.values()), dtype=np.float32) # [mm]
+                    time_data = np.array(list(tt_dict.values()), dtype=np.float32) # [ns]
 
                     t_delay = (z_ie - z_half_EL)/v_drift_EL # [ns]
 
-                    time_data = time_data + t_delay # [ns]
+                    time_data   = time_data + t_delay # [ns]
+                    t_values    = time_data
 
                     # bin_edges = np.arange(time_data.min() - bin_width, time_data.max() + 2*bin_width, bin_width)
                     # t_values = (bin_edges[:-1] + bin_edges[1:])/2
@@ -358,7 +358,7 @@ def create_s2_signal(s2_table, sns_path, list_of_bb_file_paths, output_file_path
                     prim_e_y = prim_e.initial_y.values[0] # [mm]
                     prim_e_r = np.sqrt(prim_e_x**2 + prim_e_y**2) # [mm]
 
-                    for jj, sens_id in enumerate(bb_sns_pos.sensor_id[:]):
+                    for jj, sens_id in enumerate(bb_sns_pos.sensor_id[:1]):
 
                         sensor_group = event_group.create_group(f'sens_{sens_id}')
 
@@ -367,26 +367,8 @@ def create_s2_signal(s2_table, sns_path, list_of_bb_file_paths, output_file_path
 
                         # table_id = f'sens_{sens_id}'
 
-                        s2_data = find_s2(sens_id, bb_ie['particle_id'])
-
-                        # s2 as deltas
-                        tail_in_ns = 500 # [ns]
-                        bin_edges = np.arange(time_data.min(), time_data.max() + tail_in_ns, geant4_t_binin_in_ns)
-                        s2_deltas, _ = np.histogram(time_data, bins=bin_edges, weights = s2_data)
-                        print('deltas DONE!')
-
-                        # Shaping
-                        bin_means = (bin_edges[:-1] + bin_edges[1:])/2
-                        generic_sipm_response = sipm_response(1, bin_means, bin_means.mean())
-                        s2_data_shaped = np.convolve(s2_deltas, generic_sipm_response, mode='same')
-                        print('shapin DONE!')
-
-                        # Sample: Filter data
-                        samplin_step = int(samplin_rate_in_ns//geant4_t_binin_in_ns)
-
-                        s2_data_shaped_sampled = s2_data_shaped[::samplin_step]
-                        s2_values = s2_data_shaped_sampled
-                        print('samplin DONE!')
+                        s2_data     = find_s2(sens_id, bb_ie['particle_id'])
+                        s2_values   = s2_data
                         
                         # Integrate: Create a histogram
                         # s2_values, _ = np.histogram(time_data,
@@ -398,15 +380,74 @@ def create_s2_signal(s2_table, sns_path, list_of_bb_file_paths, output_file_path
                         # Create the dictionary after the loop
                         print('s2_in_pes max = ', s2_values.max(), 'prim_e_r = ', prim_e_r, 'samplin_rate_in_ns = ', samplin_rate_in_ns)
                         sensor_data = {}
-                        # sensor_data['time_in_ns'] = np.array(t_values) # [ns]
-                        sensor_data['s2_in_pes'] = s2_values # [pes]
-                        sensor_data['prim_e_r_in_mm'] = prim_e_r # [mm]
-                        # sensor_data['bin_width_in_ns'] = samplin_rate_in_ns # [ns]
-                        sensor_data['samplin_rate_in_ns'] = samplin_rate_in_ns # [ns]
-                        # sensor_data['bin_width_in_ns'] = bin_width # [ns]
+                        sensor_data['time_in_ns']              = t_values # [ns]
+                        sensor_data['s2_in_pes']               = s2_values # [pes]
+                        sensor_data['prim_e_r_in_mm']          = prim_e_r # [mm]
+                        # sensor_data['bin_width_in_ns']       = samplin_rate_in_ns # [ns]
+                        # sensor_data['samplin_rate_in_ns']    = samplin_rate_in_ns # [ns]
+                        # sensor_data['geant4_t_binin_in_ns']  = geant4_t_binin_in_ns # [ns]
+                        # sensor_data['bin_width_in_ns']       = bin_width # [ns]
 
 
                         for data_key, values in sensor_data.items():
                             sensor_group.create_dataset(data_key, data=values)
 
     print('Done! s2 signal created :)')
+
+def shapin_and_samplin(signal_not_shaped_path, shapin_tau_in_ns, samplin_rate_in_ns = 25, t_binin_in_ns = 0.1):
+
+    signal_shaped_sampled_path = signal_not_shaped_path.replace('_s2_signal_', f'_s2_signal_shaped{shapin_tau_in_ns}ns_sampled{samplin_rate_in_ns}ns_')
+
+    # Open the HDF5 file in write mode
+    with h5py.File(signal_shaped_sampled_path, 'w') as file_shaped_sampled:
+        # Open the HDF5 file in read mode
+        with h5py.File(signal_not_shaped_path, 'r') as file_not_shaped:
+
+            event_keys = list(file_not_shaped.keys())
+
+            for event in event_keys:
+
+                event_group_shaped      = file_shaped_sampled.create_group(event)
+                event_group_not_shaped  = file_not_shaped[event]
+
+                sensor_keys = list(event_group_not_shaped.keys())
+
+                for sensor in sensor_keys:
+
+                    sensor_group_shaped = event_group_shaped.create_group(sensor)
+                    signal_not_shaped   = event_group_not_shaped[sensor]
+
+                    time_data   = np.array(signal_not_shaped['time_in_ns'], dtype=np.float32) # [ns]
+                    s2_data     = np.array(signal_not_shaped['s2_in_pes'], dtype=np.float32) # [pes]
+                    prim_e_r    = np.array(signal_not_shaped['prim_e_r_in_mm'], dtype=np.float32) # [mm]
+
+                    # s2 as deltas
+                    tail_in_ns      = shapin_tau_in_ns*4 # [ns]
+                    bin_edges       = np.arange(time_data.min(), time_data.max() + tail_in_ns, t_binin_in_ns)
+                    s2_deltas, _    = np.histogram(time_data, bins=bin_edges, weights = s2_data)
+                    print('deltas DONE!')
+
+                    # Shaping
+                    bin_means               = (bin_edges[:-1] + bin_edges[1:])/2
+                    generic_sipm_response   = sipm_response(1, bin_means, bin_means.mean(), shapin_tau_in_ns)
+                    s2_data_shaped          = np.convolve(s2_deltas, generic_sipm_response, mode='same')
+                    print('shapin DONE!')
+
+                    # Sample: Filter data
+                    samplin_step = int(samplin_rate_in_ns//t_binin_in_ns)
+
+                    s2_data_shaped_sampled  = s2_data_shaped[::samplin_step]
+                    s2_values               = s2_data_shaped_sampled
+                    print('samplin DONE!')
+
+                    sensor_data_shaped_sampled                          = {}
+                    sensor_data_shaped_sampled['s2_in_pes']             = s2_values # [pes]
+                    sensor_data_shaped_sampled['prim_e_r_in_mm']        = prim_e_r # [mm]
+                    sensor_data_shaped_sampled['samplin_rate_in_ns']    = samplin_rate_in_ns # [ns]
+                    sensor_data_shaped_sampled['shapin_tau_in_ns']      = shapin_tau_in_ns # [ns]
+
+                    for data_key, values in sensor_data_shaped_sampled.items():
+                        sensor_group_shaped.create_dataset(data_key, data=values)
+
+    print('Done! s2 signal shaped and sampled :)')
+    
