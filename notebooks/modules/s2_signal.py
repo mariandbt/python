@@ -358,7 +358,7 @@ def create_s2_signal(s2_table, sns_path, list_of_bb_file_paths, output_file_path
                     prim_e_y = prim_e.initial_y.values[0] # [mm]
                     prim_e_r = np.sqrt(prim_e_x**2 + prim_e_y**2) # [mm]
 
-                    for jj, sens_id in enumerate(bb_sns_pos.sensor_id[:1]):
+                    for jj, sens_id in enumerate(bb_sns_pos.sensor_id[:]):
 
                         sensor_group = event_group.create_group(f'sens_{sens_id}')
 
@@ -404,6 +404,7 @@ def shapin_and_samplin(signal_not_shaped_path, shapin_tau_in_ns, samplin_rate_in
         with h5py.File(signal_not_shaped_path, 'r') as file_not_shaped:
 
             event_keys = list(file_not_shaped.keys())
+            n_events   = len(event_keys)
 
             for event in event_keys:
 
@@ -411,8 +412,13 @@ def shapin_and_samplin(signal_not_shaped_path, shapin_tau_in_ns, samplin_rate_in
                 event_group_not_shaped  = file_not_shaped[event]
 
                 sensor_keys = list(event_group_not_shaped.keys())
+                n_sensors   = len(sensor_keys)
 
-                for sensor in sensor_keys:
+                for jj, sensor in enumerate(sensor_keys):
+
+                    if (((jj+1)%1 == 0) or jj == 0):
+                        print(f'Sensor {jj+1}/{n_sensors}; Event {int(event)+1}/{n_events}')
+
 
                     sensor_group_shaped = event_group_shaped.create_group(sensor)
                     signal_not_shaped   = event_group_not_shaped[sensor]

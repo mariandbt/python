@@ -48,9 +48,9 @@ n_sensors = 108
 v_drift_EL = 2.5e-3 # [mm]/[ns] = 2.5 [mm]/[us]
 
 # n_bb_events_per_file = 200
-n_bb_events_per_file = 1
+n_bb_events_per_file = 10
 
-output_file_path = os.path.join(path, 's2signals/20240503_bb0nuTEST_alltimeinfo_1ev_ELoff_s2_signal_20240405s2table.h5')
+output_file_path = os.path.join(path, 's2signals/20240503_timeTESTbb0nu_10ev_ELoff_s2_signal_20240405s2table.h5')
 
 # ________________________________________________________________________________________________________________
 
