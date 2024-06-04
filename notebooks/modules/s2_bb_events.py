@@ -38,10 +38,10 @@ class nexusEvent:
         x_hit   = self.HitsX # [mm]
         y_hit   = self.HitsY # [mm]
         z_hit   = self.HitsZ # [mm]
-        z_max   = (TPC.Length)/2 # [mm] Centered in the middle of the cylinder
+        z_EL    = TPC.StartELPositionZ # [mm] Z position towards which the e⁻ drift 
 
         # Drift
-        z_drift = (z_max - z_hit) # [mm]
+        z_drift = np.fabs(z_EL - z_hit) # [mm]
         v_drift = TPC.ActiveDriftVelocity
         t_drift = (z_drift/v_drift).to(unit.ns)
 
@@ -109,6 +109,7 @@ class nexusEvent:
         self.ElectronsMeasurementTime   = t_diff.to(unit.ns)
         self.ElectronsFinalX            = x_diff.to(unit.mm)
         self.ElectronsFinalY            = y_diff.to(unit.mm)
+        self.ElectronsFinalZ            = (z_EL*np.ones_like(self.ElectronsFinalY)).to(unit.mm)
         self.ElectronsFinalR            = np.sqrt(self.ElectronsFinalX**2 + self.ElectronsFinalY**2).to(unit.mm)
         self.ElectronsFinalAlpha        = np.arctan2(self.ElectronsFinalY, self.ElectronsFinalX).to(unit.rad)
 
@@ -149,7 +150,7 @@ class FiberBarrelTPC:
         # value reference: nexus simulation
         self.ActiveTransDiffusion = drift_trans_diff.to(unit.mm/(unit.mm**.5))
 
-    def SetActiveLongDiffusion(self, drift_long_diff = 3. *unit.mm/(unit.cm**.5)):
+    def SetActiveLongDiffusion(self, drift_long_diff = .3 *unit.mm/(unit.cm**.5)):
         # value reference: nexus simulation
         self.ActiveLongDiffusion = drift_long_diff.to(unit.mm/(unit.mm**.5))
 
@@ -161,6 +162,7 @@ class FiberBarrelTPC:
         self.ElectronLifetime = (lifetime).to(unit.ns)
 
     def SetEL(self, v_drift_EL = 2.5 *unit.mm/unit.us):
+        self.StartELPositionZ   = 0 *unit.mm # start of EL
         self.HalfWidthEL        = 5.1 *unit.mm
         self.DriftVelocityEL    = v_drift_EL.to(unit.mm/unit.ns)
 
@@ -190,14 +192,14 @@ class s2Table:
         self.NBinsX     = len(s2_tab.bin_initial_x.unique())
         self.NBinsY     = len(s2_tab.bin_initial_y.unique())
 
-        self.WidthBinX  = (s2_tab.bin_final_x - s2_tab.bin_initial_x)[0]
-        self.WidthBinY  = (s2_tab.bin_final_y - s2_tab.bin_initial_y)[0]
+        self.WidthBinX  = (s2_tab.bin_final_x - s2_tab.bin_initial_x)[0] *unit.mm
+        self.WidthBinY  = (s2_tab.bin_final_y - s2_tab.bin_initial_y)[0] *unit.mm
         
-        self.MinimumX   = s2_tab.bin_initial_x.min()
-        self.MinimumY   = s2_tab.bin_initial_y.min()
+        self.MinimumX   = s2_tab.bin_initial_x.min() *unit.mm
+        self.MinimumY   = s2_tab.bin_initial_y.min() *unit.mm
 
-        self.MaximumX   = s2_tab.bin_initial_x.max()
-        self.MaximumY   = s2_tab.bin_initial_y.max()
+        self.MaximumX   = s2_tab.bin_initial_x.max() *unit.mm
+        self.MaximumY   = s2_tab.bin_initial_y.max() *unit.mm
 
     def BuildS2TablesDict(self):
 
@@ -217,17 +219,12 @@ class s2Table:
 
 def FindRotation(electron_final_alpha, TPC):
 
-    rot = -10
-
-    while not ((electron_final_alpha < (TPC.DeltaTheta/2 + TPC.DeltaTheta*rot)) &
-                (electron_final_alpha > (-TPC.DeltaTheta/2 + TPC.DeltaTheta*rot))):
-
-        rot += 1
-        if rot > TPC.NPanels:
-            error_coment = r'ERROR! Check that the angle is less than 2pi'
-            print(error_coment)
-            break
-
+    dtheta = TPC.DeltaTheta.magnitude
+    
+    rot = np.where(electron_final_alpha > 0, 
+                   ((electron_final_alpha + dtheta/2)/dtheta).astype(int),
+                   ((electron_final_alpha - dtheta/2)/dtheta).astype(int)
+                  )
     return rot
 FindRotation = np.vectorize(FindRotation) # Vectorize the function
 
@@ -259,21 +256,18 @@ def BuildSensorsDict(TPC):
     x_dict      = dict(zip(TPC.SensorsIDs, TPC.SensorX.magnitude))
     y_dict      = dict(zip(TPC.SensorsIDs, TPC.SensorY.magnitude))
 
-    theta_dict  = dict(zip(TPC.SensorsIDs, TPC.SensorTheta.magnitude))
-    sens_dict   = dict(zip(TPC.SensorTheta.magnitude, TPC.SensorsIDs))
+    sensor_id_sorted_by_theta   = TPC.SensorsIDs[np.argsort(TPC.SensorTheta.magnitude)]
+    pos_to_id_dict              = dict(zip(TPC.SensorsPosID,  sensor_id_sorted_by_theta))
+    id_to_pos_dict              = dict(zip(sensor_id_sorted_by_theta,  TPC.SensorsPosID))
 
-    theta_to_pos_dict   = dict(zip(sorted(TPC.SensorTheta.magnitude), TPC.SensorsPosID))
-    pos_to_theta_dict   = dict(zip(TPC.SensorsPosID, sorted(TPC.SensorTheta.magnitude)))
-
-    dict_names = ('x_dict', 'y_dict', 'theta_dict', 'sens_dict', 'theta_to_pos_dict', 'pos_to_theta_dict')
-    dicts = (x_dict, y_dict, theta_dict, sens_dict, theta_to_pos_dict, pos_to_theta_dict)
+    dict_names = ('x_dict', 'y_dict', 'pos_to_id_dict', 'id_to_pos_dict')
+    dicts = (x_dict, y_dict, pos_to_id_dict, id_to_pos_dict)
 
     setup.create_or_update_global_variable(globals(), dict_names, dicts, verbose = False)
 
 def FindSensor(sensor_id, rotation, TPC):
 
-    theta   = theta_dict[sensor_id]
-    pos     = theta_to_pos_dict[theta]
+    pos     = id_to_pos_dict[sensor_id]
 
     new_pos = pos - rotation*TPC.SensorsPerPanel
 
@@ -286,8 +280,7 @@ def FindSensor(sensor_id, rotation, TPC):
     if (new_pos < -TPC.NSensors/2):
         new_pos = new_pos%(-TPC.NSensors/2)
 
-    new_theta   = pos_to_theta_dict[new_pos]
-    new_sens_id = sens_dict[new_theta]
+    new_sens_id = pos_to_id_dict[new_pos]
 
     return new_sens_id
 

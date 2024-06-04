@@ -50,7 +50,8 @@ v_drift_EL = 2.5e-3 # [mm]/[ns] = 2.5 [mm]/[us]
 # n_bb_events_per_file = 200
 n_bb_events_per_file = 10
 
-output_file_path = os.path.join(path, 's2signals/20240503_timeTESTbb0nu_10ev_ELoff_s2_signal_20240405s2table.h5')
+output_file_path        = os.path.join(path, 's2signals/20240517_TEST_bb0nu_10ev_ELoff_s2_signal_20240405s2table.h5')
+output_file_path_hits   = os.path.join(path, 's2signals/20240517_hitTEST2_bb0nu_10ev_ELoff_s2_signal_20240405s2table.h5')
 
 # ________________________________________________________________________________________________________________
 
@@ -64,4 +65,5 @@ s2sig.set_global_parameters(globals(),
                             samplin_rate_in_ns = 25
                            )
 
+s2sig.create_s2_signal_from_hits(s2_table, sns_path, list_of_bb_file_paths, output_file_path_hits)
 s2sig.create_s2_signal(s2_table, sns_path, list_of_bb_file_paths, output_file_path)

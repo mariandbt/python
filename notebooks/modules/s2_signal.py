@@ -68,6 +68,19 @@ def sipm_response(q_in_pes, t, t0, tau):
 
     return normalized_signal
 
+def conversion_to_mV(waveform_in_pes_per_ns, impedance_in_ohm):
+    
+    sipm_gain = 4e6 # e/pes
+    e_charge = 1.6e-19 # C/e
+    
+    pes_to_C = sipm_gain*e_charge # C/pes
+    ns_to_s = 1e-9 # s/ns
+    
+    waveform_in_V = waveform_in_pes_per_ns*(pes_to_C/ns_to_s)*impedance_in_ohm # V
+    waveform_in_mV = waveform_in_V*1e3 # mV
+    
+    return waveform_in_mV
+
 def set_s2_table_specs(s2_table):
 
     s2_tab = s2_table[f'sens_200'] # all maps have the same specs, so we get whichever
@@ -378,7 +391,7 @@ def create_s2_signal(s2_table, sns_path, list_of_bb_file_paths, output_file_path
 
 
                         # Create the dictionary after the loop
-                        print('s2_in_pes max = ', s2_values.max(), 'prim_e_r = ', prim_e_r, 'samplin_rate_in_ns = ', samplin_rate_in_ns)
+                        print('DIRECT FILE', 's2_in_pes max = ', s2_values.max(), 'prim_e_r = ', prim_e_r)
                         sensor_data = {}
                         sensor_data['time_in_ns']              = t_values # [ns]
                         sensor_data['s2_in_pes']               = s2_values # [pes]
@@ -393,6 +406,122 @@ def create_s2_signal(s2_table, sns_path, list_of_bb_file_paths, output_file_path
                             sensor_group.create_dataset(data_key, data=values)
 
     print('Done! s2 signal created :)')
+
+
+def create_s2_signal_from_hits(s2_table, sns_path, list_of_bb_file_paths, output_file_path, EL_ON = False):
+
+    import s2_bb_events as s2bb
+    from s2_bb_events import unit
+
+    TPC     = s2bb.FiberBarrelTPC(length = 2*unit.m)
+    TPC.SetActiveDriftVelocity()
+    TPC.SetRecombinationFactor()
+    TPC.SetElectronLifetime()
+    TPC.SetActiveLongDiffusion()
+    TPC.SetActiveTransDiffusion()
+    TPC.SetEL()
+    TPC.SetSensors(sns_path)
+
+    set_s2_table_specs(s2_table)
+    build_s2_tab_dict(s2_table)
+
+    file_index = 10**(int(math.log10(n_bb_events_per_file)) + 1)
+
+    # bin_width = samplin_rate_in_ns # [ns]
+
+    # Open the HDF5 file in write mode
+    with h5py.File(output_file_path, 'w') as file:
+
+        for ii, bb_file_path in enumerate(list_of_bb_file_paths):
+
+            bb_sns_pos, _ = setup.read_fiber_sens(sns_path)
+
+            build_sensors_dict(bb_sns_pos)
+
+            start = 0
+
+            for event in range(n_bb_events_per_file):
+
+                print('HERE!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!')
+                nexus_event = s2bb.nexusEvent(bb_file_path, event)
+                nexus_event.AddDriftAndDiffusion(TPC)
+
+
+                bb_ie_data  = {
+                    'particle_id': nexus_event.ElectronsIDs,
+                    'final_t': nexus_event.ElectronsMeasurementTime.magnitude,
+                    'final_x': nexus_event.ElectronsFinalX.magnitude,
+                    'final_y': nexus_event.ElectronsFinalY.magnitude,
+                    'final_z': nexus_event.ElectronsFinalZ.magnitude
+                    }
+                bb_ie       = pd.DataFrame(bb_ie_data)
+
+                prim_e_data  = {
+                    'initial_x': nexus_event.PrimaryElectronX.magnitude,
+                    'initial_y': nexus_event.PrimaryElectronY.magnitude
+                    }
+                prim_e       = pd.DataFrame(prim_e_data)
+                # start, bb_ie, prim_e = find_bb_ie(bb_file_path, start, event)
+
+                if len(bb_ie) > 0:
+                    event_group = file.create_group(str(file_index*ii + event))
+
+                    build_particle_dict(bb_ie)
+
+                    z_ie = np.array(list(zz_dict.values()), dtype=np.float32) # [mm]
+                    time_data = np.array(list(tt_dict.values()), dtype=np.float32) # [ns]
+
+                    t_delay = (z_ie - z_half_EL)/v_drift_EL # [ns]
+
+                    time_data   = time_data + t_delay # [ns]
+                    t_values    = time_data
+
+                    # bin_edges = np.arange(time_data.min() - bin_width, time_data.max() + 2*bin_width, bin_width)
+                    # t_values = (bin_edges[:-1] + bin_edges[1:])/2
+
+                    prim_e_x = prim_e.initial_x.values[0] # [mm]
+                    prim_e_y = prim_e.initial_y.values[0] # [mm]
+                    prim_e_r = np.sqrt(prim_e_x**2 + prim_e_y**2) # [mm]
+
+                    for jj, sens_id in enumerate(bb_sns_pos.sensor_id[:]):
+
+                        sensor_group = event_group.create_group(f'sens_{sens_id}')
+
+                        if (((jj+1)%1 == 0) or jj == 0):
+                            print(f'Sensor {jj+1}/{n_sensors}; Event {event+1}/{n_bb_events_per_file}; File {ii+1}/{n_bb_files}')
+
+                        # table_id = f'sens_{sens_id}'
+
+                        s2_data     = find_s2(sens_id, bb_ie['particle_id'])
+                        s2_values   = s2_data
+                        
+                        # Integrate: Create a histogram
+                        # s2_values, _ = np.histogram(time_data,
+                        #                             bins=bin_edges,
+                        #                             weights = s2_data_shaped)
+                        #                             # weights = s2_data)
+
+
+                        # Create the dictionary after the loop
+                        print('HITS FILE', 's2_in_pes max = ', s2_values.max(), 'prim_e_r = ', prim_e_r)
+                        sensor_data = {}
+                        sensor_data['time_in_ns']              = t_values # [ns]
+                        sensor_data['s2_in_pes']               = s2_values # [pes]
+                        sensor_data['prim_e_r_in_mm']          = prim_e_r # [mm]
+                        # sensor_data['bin_width_in_ns']       = samplin_rate_in_ns # [ns]
+                        # sensor_data['samplin_rate_in_ns']    = samplin_rate_in_ns # [ns]
+                        # sensor_data['geant4_t_binin_in_ns']  = geant4_t_binin_in_ns # [ns]
+                        # sensor_data['bin_width_in_ns']       = bin_width # [ns]
+
+
+                        for data_key, values in sensor_data.items():
+                            sensor_group.create_dataset(data_key, data=values)
+
+    print('Done! s2 signal created :)')
+
+
+
+
 
 def shapin_and_samplin(signal_not_shaped_path, shapin_tau_in_ns, samplin_rate_in_ns = 25, t_binin_in_ns = 0.1):
 

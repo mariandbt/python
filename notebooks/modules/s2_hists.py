@@ -296,6 +296,70 @@ def print_offline_s2waveform(offline_s2_file_path, event, sensor, t0_in_us = 0, 
 
     return s2_shaped_sampled, t_in_us, ax
 
+def print_offline_s2waveform_v2(offline_s2_file_path, event, sensor, bin_width_in_us = 1, new_figure = True, comment = ''):
+
+    if new_figure:
+        fig, ax = plt.subplots(nrows = 1, ncols = 1, figsize=(7, 7), constrained_layout=True) # Create a new figure
+
+    else:
+        # Check if there's an existing figure and create it if there's none
+        if plt.gcf().get_axes():
+            ax = plt.gcf().get_axes()[0]
+        else:
+            fig, ax = plt.subplots(nrows = 1, ncols = 1, figsize=(7, 7), constrained_layout=True)
+
+    font_size = 22
+    ev = f'{event}'
+    sens = f'sens_{sensor}'
+
+
+    # Open the HDF5 file in read mode
+    with h5py.File(offline_s2_file_path, 'r') as file:
+
+        # Get the group corresponding to the current key
+        event_group = file[ev]
+
+        if sensor == all:
+            # Get a list of all keys (sensor names) in the group
+            sensor_keys = list(event_group.keys())
+            s2 = 0
+
+            # Use list comprehension to get all datasets (signals) for all sensors in the group
+            for sens_key in sensor_keys:
+                signal = event_group[sens_key]
+                s2 = s2 + np.array(signal['s2_in_pes']) # [pes]
+
+            sens = 'all sensors'
+
+
+        else:
+
+            # Get and print the value corresponding to the current subkey
+            signal  = event_group[sens]
+            s2      = np.array(signal['s2_in_pes']) # [pes]
+
+        t   = np.array(signal['time_in_ns'])*1e-3 # [us]
+    
+    bin_width = bin_width_in_us # time units ([us])
+
+    binin = np.arange(t.min() - bin_width, t.max() + 2*bin_width, bin_width)
+
+    events, bins, bars = ax.hist(t, binin,
+                                 weights = s2,
+                                 density=False,
+#                                  histtype='step',
+                                 histtype='stepfilled',
+                                 alpha = 0.5,
+                                 label = f'Offline s2 (using maps) {comment}'
+                                )
+
+    ax.set_title(f's2 of event {ev} in {sens}', fontsize = font_size);
+    ax.set_xlabel('Time [us]', fontsize = font_size);
+    ax.set_ylabel('Signal [pes]', fontsize = font_size);
+
+    ax.tick_params(axis='both', labelsize = font_size*2/3)
+
+    return events, bins, ax
 
 # def OLD_build_offline_s2_max_dict(offline_s2_file_path, bin_width_in_us = 1):
 
@@ -368,21 +432,28 @@ def print_offline_s2waveform(offline_s2_file_path, event, sensor, t0_in_us = 0, 
 def build_offline_s2_max_dict(list_of_offline_s2_file_paths, samplin_rate_in_us = 1):
 
     # Max value of the s2 signals dictionary building
-    s2_max_dict = {} # max s2 peak per event
-    prim_e_r_dict = {} # radial coordinate of each event
-    n_event = 0
+    s2_max_dict     = {} # max s2 peak per event
+    prim_e_r_dict   = {} # radial coordinate of each event
+    n_event         = 0
+    n_file          = 0
+    n_files         = len(list_of_offline_s2_file_paths)
 
     for offline_s2_file_path in list_of_offline_s2_file_paths:
+        n_file   = n_file + 1
+
+        s2_max_dict_this_file       = {}
+        prim_e_r_dict_this_file     = {}
         # Open the HDF5 file in read mode
         with h5py.File(offline_s2_file_path, 'r') as file:
             # Iterate through the top-level keys (groups) in the HDF5 file
+            n_events    = len(file.keys())
             for event in file.keys():
                 # Get the group corresponding to the current event
                 event_group = file[event]
 
                 s2_max = []
 
-                print(f'Event {event} processed')
+                print(f'Event {n_event + 1}/{n_events} processed in file {n_file}/{n_files}')
 
                 # Iterate through the sensors (datasets) in the current group
                 for sensor in event_group.keys():
@@ -407,10 +478,13 @@ def build_offline_s2_max_dict(list_of_offline_s2_file_paths, samplin_rate_in_us 
                     print('Discarded event by fiducial cut')
                     continue
 
-                s2_max_dict[n_event] = max(s2_max) # max s2 peak from all sensors
-                prim_e_r_dict[n_event] = prim_e_r # radial coordinate of each event
+                s2_max_dict_this_file[n_event] = max(s2_max) # max s2 peak from all sensors
+                prim_e_r_dict_this_file[n_event] = prim_e_r # radial coordinate of each event
 
                 n_event = n_event + 1
+
+            s2_max_dict = {**s2_max_dict, **s2_max_dict_this_file}
+            prim_e_r_dict = {**prim_e_r_dict, **prim_e_r_dict_this_file}
 
             n_sensors = len(event_group.keys()) # all events have all sensors, just get the last one
 
