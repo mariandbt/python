@@ -178,6 +178,17 @@ class FiberBarrelTPC:
         self.SensorY        = np.array(sns_positions.y) *unit.mm
         self.SensorTheta    = np.round(np.arctan2(self.SensorY, self.SensorX), 3)
 
+    def SetDefaults(self, sns_path):
+        self.SetActiveDriftVelocity()
+        self.SetActiveLongDiffusion()
+        self.SetActiveTransDiffusion()
+        self.SetRecombinationFactor()
+        self.SetElectronLifetime()
+        self.SetEL()
+        self.SetSensors(sns_path)
+
+        print('Default parameters set succesfully :) TPC ready to use')
+
 
 class s2Table:
     def __init__(self, s2_table_path):
@@ -222,34 +233,11 @@ def FindRotation(electron_final_alpha, TPC):
     dtheta = TPC.DeltaTheta.magnitude
     
     rot = np.where(electron_final_alpha > 0, 
-                   ((electron_final_alpha + dtheta/2)/dtheta).astype(int),
-                   ((electron_final_alpha - dtheta/2)/dtheta).astype(int)
+                   int((electron_final_alpha + dtheta/2)/dtheta),
+                   int((electron_final_alpha - dtheta/2)/dtheta)
                   )
     return rot
 FindRotation = np.vectorize(FindRotation) # Vectorize the function
-
-def BuildElectronsDict(nexusEvent, TPC):
-
-    tt_dict     = dict(zip(nexusEvent.ElectronsIDs, nexusEvent.ElectronsMeasurementTime.magnitude))
-    xx_dict     = dict(zip(nexusEvent.ElectronsIDs, nexusEvent.ElectronsFinalX.magnitude))
-    yy_dict     = dict(zip(nexusEvent.ElectronsIDs, nexusEvent.ElectronsFinalY.magnitude))
-
-    rr_dict     = dict(zip(nexusEvent.ElectronsIDs, nexusEvent.ElectronsFinalR.magnitude))
-
-    rotation    = FindRotation(nexusEvent.ElectronsFinalAlpha.magnitude, TPC)
-
-    new_alpha   = nexusEvent.ElectronsFinalAlpha - rotation * TPC.DeltaTheta
-    new_xx      = nexusEvent.ElectronsFinalR * np.cos(new_alpha)
-    new_yy      = nexusEvent.ElectronsFinalR * np.sin(new_alpha)
-
-    rot_dict    = dict(zip(nexusEvent.ElectronsIDs, rotation))
-    new_xx_dict = dict(zip(nexusEvent.ElectronsIDs, new_xx.magnitude))
-    new_yy_dict = dict(zip(nexusEvent.ElectronsIDs, new_yy.magnitude))
-
-    dict_names = ('tt_dict', 'xx_dict', 'yy_dict', 'rr_dict', 'rot_dict', 'new_xx_dict', 'new_yy_dict')
-    dicts = (tt_dict, xx_dict, yy_dict, rr_dict, rot_dict, new_xx_dict, new_yy_dict)
-
-    setup.create_or_update_global_variable(globals(), dict_names, dicts, verbose = False)
 
 def BuildSensorsDict(TPC):
     
@@ -283,75 +271,195 @@ def FindSensor(sensor_id, rotation, TPC):
     new_sens_id = pos_to_id_dict[new_pos]
 
     return new_sens_id
+FindSensor = np.vectorize(FindSensor) # Vectorize the function
 
-def FindS2(sensor_id, electron_id, s2Table, TPC):
+def FindS2(sensor_id, nexusEvent, s2Table, TPC):
 
-    # rr, alpha       = rr_dict[electron_id], alpha_dict[electron_id]
-    rotation        = rot_dict[electron_id]
-    new_xx, new_yy  = new_xx_dict[electron_id], new_yy_dict[electron_id]
+    rotation    = FindRotation(nexusEvent.ElectronsFinalAlpha.magnitude, TPC)
+
+    new_alpha   = nexusEvent.ElectronsFinalAlpha - rotation * TPC.DeltaTheta
+    new_xx      = nexusEvent.ElectronsFinalR * np.cos(new_alpha)
+    new_yy      = nexusEvent.ElectronsFinalR * np.sin(new_alpha)
 
     new_sens_id     = FindSensor(sensor_id, rotation, TPC)
-    s2_tab_matrix   = s2Table.S2TablesDict[f'sens_{new_sens_id}']
+    
+    x_bin = ((new_xx - s2Table.MinimumX)//(s2Table.WidthBinX)).magnitude.astype(int)
+    y_bin = ((new_yy - s2Table.MinimumY)//(s2Table.WidthBinY)).magnitude.astype(int)
+    
+    zero_signal_conditions = (new_xx > s2Table.MaximumX) | \
+                             (new_xx < s2Table.MinimumX) | \
+                             (new_yy > s2Table.MaximumY) | \
+                             (new_yy < s2Table.MinimumY)
+    
+    # Initialize the output array with zeros
+    s2_signal = np.zeros_like(new_xx)
 
+    # Apply the conditions
+    valid_indices = ~zero_signal_conditions
+    
+    # For the valid indices, get the corresponding values from the s2Table.S2TablesDict
+    signal_values = np.array([s2Table.S2TablesDict[f'sens_{sid}'][xb, yb] 
+                              for sid, xb, yb 
+                              in zip(new_sens_id[valid_indices], x_bin[valid_indices], y_bin[valid_indices])])
 
-    x_bin = int((new_xx - s2Table.MinimumX)//s2Table.WidthBinX)
-    y_bin = int((new_yy - s2Table.MinimumY)//s2Table.WidthBinY)
+    # Generate Poisson-distributed random numbers for these values
+    poisson_fluctuations = np.random.poisson(signal_values)
 
-    if ((new_xx > s2Table.MaximumX) or
-        (new_xx < s2Table.MinimumX) or
-        (new_yy > s2Table.MaximumY) or
-        (new_yy < s2Table.MinimumY)
-       ):
-        s2_signal = 0.
-    else:
-
-        bin_content = s2_tab_matrix[x_bin][y_bin]
-        s2_signal = np.random.poisson(bin_content, 1) # instead of just taking the contente of the bin, we add poisson fluctuations
-
+    # Place the Poisson values into the s2_signal array
+    s2_signal[valid_indices] = poisson_fluctuations
 
     return s2_signal
-FindS2 = np.vectorize(FindS2) # Vectorize the function
 
+def ResponseSiPM(q_in_pes, t, t0, tau):
+
+    """
+    NOTE: units of t, t0, tau and (tau * rise_time) must be the same
+    """
+    # SiPM response parameters
+    # tau = 200   # [ns] Decay time constant
+    rise_time = 1 # Rise time constant
+
+    rise_term = 1 - np.exp(-(t - t0) / (tau * rise_time))
+    decay_term = np.exp(-(t - t0) / tau)
+
+    signal = (rise_term * decay_term)
+    signal[t<t0] = 0
+    signal_area = np.trapz(x = t, y = signal) or 1
+
+    normalized_signal = q_in_pes*signal/signal_area
+
+    return normalized_signal
 
 class s2Signal:
-    def __init__(s2Table, nexusEventDict, TPC):
+    def __init__(self, s2Table, TPC, nexusEvent):
 
         s2Table.BuildS2TablesDict()
         BuildSensorsDict(TPC)
+        nexusEvent.AddDriftAndDiffusion(TPC)
 
-        for event in nexusEventDict.keys():
+        if nexusEvent.NIonElectrons.sum() > 0:
 
-            nexusEvent    = nexusEventDict[event]
-            nexusEvent.AddDriftAndDiffusion(TPC)
+            # BuildElectronsDict(nexusEvent, TPC)
 
-            if len(nexusEvent.NIonElectrons.sum()) > 0:
+            time_data   = nexusEvent.ElectronsMeasurementTime
+            t_delay     = (TPC.Length/2 + TPC.HalfWidthEL)/TPC.DriftVelocityEL 
+            t_delay     = t_delay.to(unit.ns)
+            time_data   = (time_data + t_delay).to(unit.ns) # [ns]
+            t_values    = time_data.magnitude.astype(np.float32)
 
-                BuildElectronsDict(nexusEvent, TPC)
+            prim_e_r                = nexusEvent.PrimaryElectronR.to(unit.mm)
+            self.PrimaryElectronsR  = prim_e_r.magnitude.astype(np.float32) # [mm]
+            self.Time               = t_values # [ns]
+            self.SensorResponse     = {}
 
-                time_data   = nexusEvent.ElectronsMeasurementTime
-                t_delay     = (TPC.Length/2 + TPC.HalfWidthEL)/TPC.DriftVelocityEL 
-                t_delay     = t_delay.to(unit.ns)
-                time_data   = (time_data + t_delay).to(unit.ns) # [ns]
-                t_values    = time_data.magnitude
+            for jj, sens_id in enumerate(TPC.SensorsIDs[:]):
 
-                prim_e_r    = nexusEvent.PrimaryElectronR.to(unit.mm).magnitude
-                event_data  = {}
-                event_data['prim_e_r_in_mm']   = prim_e_r # [mm]
-################ chek cómo guardar la info ###########################
-                event_data['signal']   = prim_e_r # [mm]
-################ chek cómo guardar la info ###########################
+                if (((jj+1)%1 == 0) or jj == 0):
+                    processing_message = f'Processing sensor {jj+1}/{TPC.NSensors}...'
+                    print(processing_message + ' '*len(processing_message), end = '\r')
 
-                for jj, sens_id in enumerate(TPC.SensorIDs[:]):
+                s2_data     = FindS2(sens_id, nexusEvent, s2Table, TPC)
+                s2_values   = s2_data.astype(np.float32) # [pes]
 
-                    if (((jj+1)%1 == 0) or jj == 0):
-                        print(f'Sensor {jj+1}/{TPC.NSensors}; Event {event+1}/{n_bb_events_per_file}; File {ii+1}/{n_bb_files}')
+                self.SensorResponse[sens_id]    = s2_values # [pes]
+            
+            print(f'{processing_message} Signal created succesfully :)', end = '\r')
 
-                    s2_data     = FindS2(sens_id, nexusEvent.ElectronsIDs, s2_table, TPC)
-                    s2_values   = s2_data # [pes]
 
-                    sensor_data = {}
-                    sensor_data['time_in_ns']       = t_values # [ns]
-                    sensor_data['s2_in_pes']        = s2_values # [pes]
+    def AddShapinAndSamplin(self, shapin_tau = 155 *unit.ns, samplin_rate = 25 *unit.ns, t_binin = 0.1 *unit.ns):
+
+        shapin_tau      = shapin_tau.to(unit.ns).magnitude
+        samplin_rate    = samplin_rate.to(unit.ns).magnitude
+        t_binin         = t_binin.to(unit.ns).magnitude
+
+        sensor_keys = list(self.SensorResponse.keys())
+        n_sensors   = len(sensor_keys)
+
+        time_data   = self.Time # [ns]
+        prim_e_r    = self.PrimaryElectronsR # [mm]
+
+        # for the s2 as deltas
+        tail_in_ns  = shapin_tau*4 # [ns]
+        bin_edges   = np.arange(time_data.min(), time_data.max() + tail_in_ns, t_binin)
+
+        # for the Shaping
+        bin_means               = (bin_edges[:-1] + bin_edges[1:])/2
+        generic_sipm_response   = ResponseSiPM(1, bin_means, bin_means.mean(), shapin_tau)
+
+        # for the Samplin
+        samplin_step = int(samplin_rate//t_binin)
+
+        for jj, sensor in enumerate(sensor_keys[:]):
+
+            if (((jj+1)%1 == 0) or jj == 0):
+                processing_message = f'Processing sensor {jj+1}/{n_sensors}...'
+                print(processing_message + ' '*2*len(processing_message), end = '\r')
+
+            s2_data     = self.SensorResponse[sensor] # [pes]
+
+            # s2 as deltas
+            s2_deltas, _    = np.histogram(time_data, bins=bin_edges, weights = s2_data)
+            print(f'{processing_message} deltas DONE!' + ' '*10, end = '\r')
+
+            # Shaping
+            s2_data_shaped          = np.convolve(s2_deltas, generic_sipm_response, mode='same')
+            print(f'{processing_message} shapin DONE!' + ' '*10, end = '\r')
+
+            # Sample: Filter data
+            s2_data_shaped_sampled  = s2_data_shaped[::samplin_step]
+            s2_values               = s2_data_shaped_sampled
+            print(f'{processing_message} samplin DONE!' + ' '*10, end = '\r')
+
+            self.SignalShapedSampled    = s2_values # [pes]
+            self.SamplinRate            = samplin_rate *unit.ns # [ns]
+            self.ShapinDecayConstant    = shapin_tau *unit.ns # [ns]
+
+        print(f'{processing_message} Shapin and samplin done succesfully :)' + ' '*10, end = '\r')
+
+
+
+
+
+
+# class s2Signal:
+#     def __init__(s2Table, nexusEventDict, TPC):
+
+#         s2Table.BuildS2TablesDict()
+#         BuildSensorsDict(TPC)
+
+#         for event in nexusEventDict.keys():
+
+#             nexusEvent    = nexusEventDict[event]
+#             nexusEvent.AddDriftAndDiffusion(TPC)
+
+#             if len(nexusEvent.NIonElectrons.sum()) > 0:
+
+#                 # BuildElectronsDict(nexusEvent, TPC)
+
+#                 time_data   = nexusEvent.ElectronsMeasurementTime
+#                 t_delay     = (TPC.Length/2 + TPC.HalfWidthEL)/TPC.DriftVelocityEL 
+#                 t_delay     = t_delay.to(unit.ns)
+#                 time_data   = (time_data + t_delay).to(unit.ns) # [ns]
+#                 t_values    = time_data.magnitude
+
+#                 prim_e_r    = nexusEvent.PrimaryElectronR.to(unit.mm).magnitude
+#                 event_data  = {}
+#                 event_data['prim_e_r_in_mm']   = prim_e_r # [mm]
+# ################ chek cómo guardar la info ###########################
+#                 event_data['signal']   = {} 
+# ################ chek cómo guardar la info ###########################
+
+#                 for jj, sens_id in enumerate(TPC.SensorIDs[:]):
+
+#                     if (((jj+1)%1 == 0) or jj == 0):
+#                         print(f'Sensor {jj+1}/{TPC.NSensors}; Event {event+1}/{n_bb_events_per_file}; File {ii+1}/{n_bb_files}')
+
+#                     s2_data     = FindS2(sens_id, nexusEvent, s2_table, TPC)
+#                     s2_values   = s2_data # [pes]
+
+#                     sensor_data = {}
+#                     sensor_data['time_in_ns']       = t_values # [ns]
+#                     sensor_data['s2_in_pes']        = s2_values # [pes]
                         
 
 
