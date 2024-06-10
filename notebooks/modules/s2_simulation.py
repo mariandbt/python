@@ -1,11 +1,7 @@
 # S2 module to create bb events
 
 from import_modules import *
-
 import set_up as setup
-
-import random
-from pint import UnitRegistry
 
 unit = UnitRegistry()
 class InvalidUnitInputError(Exception):
@@ -112,9 +108,6 @@ class nexusEvent:
         self.ElectronsFinalZ            = (z_EL*np.ones_like(self.ElectronsFinalY)).to(unit.mm)
         self.ElectronsFinalR            = np.sqrt(self.ElectronsFinalX**2 + self.ElectronsFinalY**2).to(unit.mm)
         self.ElectronsFinalAlpha        = np.arctan2(self.ElectronsFinalY, self.ElectronsFinalX).to(unit.rad)
-
-        
-
 
 
 class FiberBarrelTPC:
@@ -316,7 +309,6 @@ def ResponseSiPM(q_in_pes, t, t0, tau):
     NOTE: units of t, t0, tau and (tau * rise_time) must be the same
     """
     # SiPM response parameters
-    # tau = 200   # [ns] Decay time constant
     rise_time = 1 # Rise time constant
 
     rise_term = 1 - np.exp(-(t - t0) / (tau * rise_time))
@@ -330,6 +322,31 @@ def ResponseSiPM(q_in_pes, t, t0, tau):
 
     return normalized_signal
 
+
+def ConvertTomA(waveform_in_pes_per_ns):
+
+    sipm_gain = 4e6 # e/pes
+    e_charge = 1.6e-19 # C/e
+    
+    pes_to_C = sipm_gain*e_charge # C/pes
+    ns_to_s = 1e-9 # s/ns
+    
+    waveform_in_A = waveform_in_pes_per_ns*(pes_to_C/ns_to_s) # A
+    waveform_in_mA = waveform_in_A*1e3 # mA
+
+    return waveform_in_mA
+ConvertTomA = np.vectorize(ConvertTomA) # Vectorize the function
+
+
+def ConvertTomV(waveform_in_pes_per_ns, impedance_in_ohm = 50):
+
+    waveform_in_mV = ConvertTomA(waveform_in_pes_per_ns)*impedance_in_ohm # mV
+
+    return waveform_in_mV
+ConvertTomV = np.vectorize(ConvertTomV) # Vectorize the function
+
+
+
 class s2Signal:
     def __init__(self, s2Table, TPC, nexusEvent):
 
@@ -337,9 +354,9 @@ class s2Signal:
         BuildSensorsDict(TPC)
         nexusEvent.AddDriftAndDiffusion(TPC)
 
-        if nexusEvent.NIonElectrons.sum() > 0:
+        self.EventID    = nexusEvent.EventID
 
-            # BuildElectronsDict(nexusEvent, TPC)
+        if nexusEvent.NIonElectrons.sum() > 0:
 
             time_data   = nexusEvent.ElectronsMeasurementTime
             t_delay     = (TPC.Length/2 + TPC.HalfWidthEL)/TPC.DriftVelocityEL 
@@ -349,13 +366,13 @@ class s2Signal:
 
             prim_e_r                = nexusEvent.PrimaryElectronR.to(unit.mm)
             self.PrimaryElectronsR  = prim_e_r.magnitude.astype(np.float32) # [mm]
-            self.Time               = t_values # [ns]
+            self.Time               = t_values *unit.ns# [ns]
             self.SensorResponse     = {}
 
             for jj, sens_id in enumerate(TPC.SensorsIDs[:]):
 
                 if (((jj+1)%1 == 0) or jj == 0):
-                    processing_message = f'Processing sensor {jj+1}/{TPC.NSensors}...'
+                    processing_message = f'Creating signal (Processing sensor {jj+1}/{TPC.NSensors})...'
                     print(processing_message + ' '*len(processing_message), end = '\r')
 
                 s2_data     = FindS2(sens_id, nexusEvent, s2Table, TPC)
@@ -372,10 +389,13 @@ class s2Signal:
         samplin_rate    = samplin_rate.to(unit.ns).magnitude
         t_binin         = t_binin.to(unit.ns).magnitude
 
+        if t_binin > samplin_rate:
+            raise ValueError("The time bining cannot be > the sampling rate!!")
+
         sensor_keys = list(self.SensorResponse.keys())
         n_sensors   = len(sensor_keys)
 
-        time_data   = self.Time # [ns]
+        time_data   = self.Time.to(unit.ns).magnitude # [ns]
         prim_e_r    = self.PrimaryElectronsR # [mm]
 
         # for the s2 as deltas
@@ -389,161 +409,157 @@ class s2Signal:
         # for the Samplin
         samplin_step = int(samplin_rate//t_binin)
 
+        self.SignalShapedSampled    = {} 
+
         for jj, sensor in enumerate(sensor_keys[:]):
 
             if (((jj+1)%1 == 0) or jj == 0):
-                processing_message = f'Processing sensor {jj+1}/{n_sensors}...'
+                processing_message = f'Shaping and sampling (Processing sensor {jj+1}/{n_sensors})...'
                 print(processing_message + ' '*2*len(processing_message), end = '\r')
 
             s2_data     = self.SensorResponse[sensor] # [pes]
 
             # s2 as deltas
             s2_deltas, _    = np.histogram(time_data, bins=bin_edges, weights = s2_data)
-            print(f'{processing_message} deltas DONE!' + ' '*10, end = '\r')
 
             # Shaping
             s2_data_shaped          = np.convolve(s2_deltas, generic_sipm_response, mode='same')
-            print(f'{processing_message} shapin DONE!' + ' '*10, end = '\r')
 
             # Sample: Filter data
             s2_data_shaped_sampled  = s2_data_shaped[::samplin_step]
             s2_values               = s2_data_shaped_sampled
-            print(f'{processing_message} samplin DONE!' + ' '*10, end = '\r')
 
-            self.SignalShapedSampled    = s2_values # [pes]
-            self.SamplinRate            = samplin_rate *unit.ns # [ns]
-            self.ShapinDecayConstant    = shapin_tau *unit.ns # [ns]
+            self.SignalShapedSampled[sensor]    = s2_values # [pes]/[ns]
+            self.SamplinRate                    = samplin_rate *unit.ns # [ns]
+            self.ShapinDecayConstant            = shapin_tau *unit.ns # [ns]
 
         print(f'{processing_message} Shapin and samplin done succesfully :)' + ' '*10, end = '\r')
 
 
+    def PrintWaveform(self, sensor, 
+                      shaped_and_sampled = True, 
+                      units = 'mV',  # (mV, pes/ns, mA, ...) only used if shaped_and_sampled = True
+                      impedance_in_ohm = 50, # only used if units_in_mV = True
+                      bin_width = 1 *unit.us, # only used if shaped_and_sampled = False
+                      new_figure = True, 
+                      comment = ''):
 
+        if new_figure:
+                fig, ax = plt.subplots(nrows = 1, ncols = 1, 
+                                       figsize=(7, 7), 
+                                       constrained_layout=True) # Create a new figure
 
+        else:
+            # Check if there's an existing figure and create it if there's none
+            if plt.gcf().get_axes():
+                ax = plt.gcf().get_axes()[0]
+            else:
+                fig, ax = plt.subplots(nrows = 1, ncols = 1, 
+                                           figsize=(7, 7), 
+                                           constrained_layout=True)
 
+        font_size   = 22
+        event       = self.EventID
+        bin_width   = bin_width.to(unit.ns).magnitude
 
-# class s2Signal:
-#     def __init__(s2Table, nexusEventDict, TPC):
+        if shaped_and_sampled:
 
-#         s2Table.BuildS2TablesDict()
-#         BuildSensorsDict(TPC)
+            nt  = len(self.SignalShapedSampled[sensor])
+            dt  = self.SamplinRate.to(unit.us).magnitude
+            t0  = self.Time.to(unit.us).magnitude.min()
+            t   = np.linspace(t0, t0 + nt*dt, nt)*unit.us # [us]
 
-#         for event in nexusEventDict.keys():
+            if units == 'mV':
+                waveform    = ConvertTomV(self.SignalShapedSampled[sensor], impedance_in_ohm)
+                ax.set_ylabel('Signal [mV]', fontsize = font_size);
 
-#             nexusEvent    = nexusEventDict[event]
-#             nexusEvent.AddDriftAndDiffusion(TPC)
+            elif units == 'mA':
+                waveform    = ConvertTomA(self.SignalShapedSampled[sensor])
+                ax.set_ylabel('Signal [mA]', fontsize = font_size);
 
-#             if len(nexusEvent.NIonElectrons.sum()) > 0:
+            elif units == 'pes/ns':
+                waveform    = self.SignalShapedSampled[sensor]
+                ax.set_ylabel('Signal [pes/ns]', fontsize = font_size);
 
-#                 # BuildElectronsDict(nexusEvent, TPC)
+            else:
+                raise ValueError("Invalid units: choose among mV, pes/ns or mA")
 
-#                 time_data   = nexusEvent.ElectronsMeasurementTime
-#                 t_delay     = (TPC.Length/2 + TPC.HalfWidthEL)/TPC.DriftVelocityEL 
-#                 t_delay     = t_delay.to(unit.ns)
-#                 time_data   = (time_data + t_delay).to(unit.ns) # [ns]
-#                 t_values    = time_data.magnitude
+            samplin_rate    = self.SamplinRate.to(unit.us)
+            tau             = self.ShapinDecayConstant.to(unit.ns)
+            label           = ("SiPM response: \n"
+                               f"Sampling rate = {samplin_rate.magnitude:.2E}[{samplin_rate.units:~}] \n"
+                               fr"$\tau$ = {tau.magnitude:.2f}[{tau.units:~}]"
+                               )
+            ax.plot(t.magnitude, waveform, label = label)
 
-#                 prim_e_r    = nexusEvent.PrimaryElectronR.to(unit.mm).magnitude
-#                 event_data  = {}
-#                 event_data['prim_e_r_in_mm']   = prim_e_r # [mm]
-# ################ chek cómo guardar la info ###########################
-#                 event_data['signal']   = {} 
-# ################ chek cómo guardar la info ###########################
+        else:
 
-#                 for jj, sens_id in enumerate(TPC.SensorIDs[:]):
+            t   = self.Time.to(unit.us) # [us]
 
-#                     if (((jj+1)%1 == 0) or jj == 0):
-#                         print(f'Sensor {jj+1}/{TPC.NSensors}; Event {event+1}/{n_bb_events_per_file}; File {ii+1}/{n_bb_files}')
+            waveform    = self.SensorResponse[sensor]
 
-#                     s2_data     = FindS2(sens_id, nexusEvent, s2_table, TPC)
-#                     s2_values   = s2_data # [pes]
+            _, _, _ = ax.hist(t.magnitude, 
+                              bins = 100, 
+                              weights = waveform);
 
-#                     sensor_data = {}
-#                     sensor_data['time_in_ns']       = t_values # [ns]
-#                     sensor_data['s2_in_pes']        = s2_values # [pes]
-                        
+            ax.set_ylabel('Signal [pes]', fontsize = font_size);
+            
 
+        ax.set_title(f's2 of event {event} in {sensor}', fontsize = font_size);
+        ax.set_xlabel(f'Time [{t.units:~}]', fontsize = font_size);
 
+        ax.tick_params(axis='both', labelsize = font_size*2/3);
 
+        return t, waveform, ax
 
+def DynamicRange(s2table, 
+                 TPC, 
+                 list_of_bb_paths,
+                 shapin_tau = 155 *unit.ns,
+                 samplin_rate = 25*unit.ns,
+                 t_binin = 1*unit.ns,
+                 units = 'mV',
+                 impedance_in_ohm = 50 # only used if units = mV
+                 ):
 
-#         file_index = 10**(int(math.log10(n_bb_events_per_file)) + 1)
+    DynamicRange = {}
 
-#         # Open the HDF5 file in write mode
-#         with h5py.File(output_file_path, 'w') as file:
+    for ii, event_path in enumerate(list_of_bb_paths):
+        # Read only the event_id column
+        event_ids = pd.read_hdf(event_path, "/MC/hits", columns=['event_id'])
+        # Get the maximum value of event_id
+        max_event_id = event_ids['event_id'].max()
 
-#             for ii, bb_file_path in enumerate(list_of_bb_file_paths):
+        for event in range(max_event_id):
 
-#                 bb_sns_pos, _ = setup.read_fiber_sens(sns_path)
+            if (((event)%1 == 0) or event == 0):
+                processing_message = f'Dynamic range (Processing event {event + 1}/{max_event_id + 1} in file {ii+1}/{len(list_of_bb_paths)}...)'
+                print(processing_message + ' '*2*len(processing_message), end = '\r\n')
 
+            NexusEvent = nexusEvent(event_path, event)
+            NexusEvent.AddDriftAndDiffusion(TPC)
 
-#                 start = 0
+            s2signal = s2Signal(s2table, TPC, NexusEvent)
+            s2signal.AddShapinAndSamplin(shapin_tau, samplin_rate, t_binin)
 
-#                 for event in nexusEventDict.keys():
+            if units == 'mV':
+                waveform    = ConvertTomV(list(s2signal.SignalShapedSampled.values()), impedance_in_ohm)
 
-#                     nexusEvent    = nexusEventDict[event]
+            elif units == 'mA':
+                waveform    = ConvertTomA(list(s2signal.SignalShapedSampled.values()))
 
-#                     if len(bb_ie) > 0:
-#                         event_group = file.create_group(str(file_index*ii + event))
+            elif units == 'pes/ns':
+                waveform    = list(s2signal.SignalShapedSampled.values())
 
-#                         BuildElectronsDict(nexusEvent, TPC)
+            else:
+                raise ValueError("Invalid units: choose among mV, pes/ns or mA")
 
-#                         z_ie = np.array(list(zz_dict.values()), dtype=np.float32) # [mm]
-#                         time_data = np.array(list(tt_dict.values()), dtype=np.float32) # [ns]
+            max_value               = max(map(max, waveform))
+            event_id                = ii*(10**len(f'{max_event_id}')) + event
+            DynamicRange[event_id]  = max_value
 
-#                         t_delay = (z_ie - z_half_EL)/v_drift_EL # [ns]
+    return DynamicRange
 
-#                         time_data   = time_data + t_delay # [ns]
-#                         t_values    = time_data
-
-#                         # bin_edges = np.arange(time_data.min() - bin_width, time_data.max() + 2*bin_width, bin_width)
-#                         # t_values = (bin_edges[:-1] + bin_edges[1:])/2
-
-#                         prim_e_x = prim_e.initial_x.values[0] # [mm]
-#                         prim_e_y = prim_e.initial_y.values[0] # [mm]
-#                         prim_e_r = np.sqrt(prim_e_x**2 + prim_e_y**2) # [mm]
-
-#                         for jj, sens_id in enumerate(bb_sns_pos.sensor_id[:]):
-
-#                             sensor_group = event_group.create_group(f'sens_{sens_id}')
-
-#                             if (((jj+1)%1 == 0) or jj == 0):
-#                                 print(f'Sensor {jj+1}/{n_sensors}; Event {event+1}/{n_bb_events_per_file}; File {ii+1}/{n_bb_files}')
-
-#                             # table_id = f'sens_{sens_id}'
-
-#                             s2_data     = find_s2(sens_id, bb_ie['particle_id'])
-#                             s2_values   = s2_data
-                            
-#                             # Integrate: Create a histogram
-#                             # s2_values, _ = np.histogram(time_data,
-#                             #                             bins=bin_edges,
-#                             #                             weights = s2_data_shaped)
-#                             #                             # weights = s2_data)
-
-
-#                             # Create the dictionary after the loop
-#                             print('s2_in_pes max = ', s2_values.max(), 'prim_e_r = ', prim_e_r, 'samplin_rate_in_ns = ', samplin_rate_in_ns)
-#                             sensor_data = {}
-#                             sensor_data['time_in_ns']              = t_values # [ns]
-#                             sensor_data['s2_in_pes']               = s2_values # [pes]
-#                             sensor_data['prim_e_r_in_mm']          = prim_e_r # [mm]
-#                             # sensor_data['bin_width_in_ns']       = samplin_rate_in_ns # [ns]
-#                             # sensor_data['samplin_rate_in_ns']    = samplin_rate_in_ns # [ns]
-#                             # sensor_data['geant4_t_binin_in_ns']  = geant4_t_binin_in_ns # [ns]
-#                             # sensor_data['bin_width_in_ns']       = bin_width # [ns]
-
-
-#                             for data_key, values in sensor_data.items():
-#                                 sensor_group.create_dataset(data_key, data=values)
-
-#         print('Done! s2 signal created :)')
-
-
-
-    # def ShapinAndSamplin(self):
-    # def CreateS2SignalFile(self):
-
-        
 
 
 
