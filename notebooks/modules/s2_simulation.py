@@ -15,15 +15,21 @@ class nexusEvent:
         hits            = pd.read_hdf(nexus_event_path, "/MC/hits")
         hits            = hits.query(f'event_id == {self.EventID}')
 
-        self.HitsX      = np.array(hits.x) *unit.mm
-        self.HitsY      = np.array(hits.y) *unit.mm
-        self.HitsZ      = np.array(hits.z) *unit.mm
-        self.HitsTime   = np.array(hits.time) *unit.ns
-        self.HitsEnergy = (np.array(hits.energy) *unit.MeV).to(unit.eV)
+        if hits.empty:
+            print('This event is empty... Try another, this one won\'t take you far :(')
+            self.Empty  = True
+        
+        else:
+            self.Empty      = False
+            self.HitsX      = np.array(hits.x) *unit.mm
+            self.HitsY      = np.array(hits.y) *unit.mm
+            self.HitsZ      = np.array(hits.z) *unit.mm
+            self.HitsTime   = np.array(hits.time) *unit.ns
+            self.HitsEnergy = (np.array(hits.energy) *unit.MeV).to(unit.eV)
 
-        self.PrimaryElectronX   = self.HitsX[self.HitsTime == self.HitsTime.min()]
-        self.PrimaryElectronY   = self.HitsY[self.HitsTime == self.HitsTime.min()]
-        self.PrimaryElectronR   = np.sqrt(self.PrimaryElectronX**2 + self.PrimaryElectronY**2)
+            self.PrimaryElectronX   = self.HitsX[self.HitsTime == self.HitsTime.min()]
+            self.PrimaryElectronY   = self.HitsY[self.HitsTime == self.HitsTime.min()]
+            self.PrimaryElectronR   = np.sqrt(self.PrimaryElectronX**2 + self.PrimaryElectronY**2)
 
 
     def AddDriftAndDiffusion(self, TPC, event_type = 'bb0nu'):
@@ -43,17 +49,24 @@ class nexusEvent:
 
         t_measurement = t_hit + t_drift # After drift
 
-        recombi_term  = 1 - TPC.RecombinationFactor
-        lifetime_term = np.exp(-t_drift/TPC.ElectronLifetime)
+        recombi_prob    = 1 - TPC.RecombinationFactor
+        lifetime_prob   = np.exp(-t_drift/TPC.ElectronLifetime).magnitude
 
-        if event_type == 'bb0nu':
-            ionization_energy = TPC.XeIonization
-        if event_type == 'KrCalibration':
-            ionization_energy = TPC.KrIonization
+        ionization_energy   = TPC.HPGXeIonization
+        fano_factor         = TPC.HPGXeFano
 
-        n_ie = hit_e*recombi_term*lifetime_term/ionization_energy
+        n_ie    = (hit_e/ionization_energy).magnitude
+        sigma   = np.sqrt(n_ie*fano_factor)
 
-        self.NIonElectrons  = np.vectorize(int)(n_ie.magnitude)
+        # Fano factor correction
+        n_ie    = np.random.normal(loc = n_ie*recombi_prob, scale = sigma) # recombination
+        n_ie    = np.random.normal(loc = n_ie*lifetime_prob, scale = sigma) # lifetime correction
+
+        n_ie[n_ie < 0]  = 0
+        n_ie            = np.vectorize(int)(n_ie)
+
+
+        self.NIonElectrons  = n_ie
         self.DriftTime      = t_drift
 
         # Diffusion
@@ -70,7 +83,6 @@ class nexusEvent:
         for t, std, n in zip(t_measurement, sigma_long, n_ie):
             mu      = t.magnitude
             sigma   = std.magnitude
-            n       = int(n.magnitude)
 
             gaussian_diff = np.random.normal(mu, sigma, size = n)*t.units
 
@@ -81,7 +93,6 @@ class nexusEvent:
         for x, std, n in zip(x_hit, sigma_trans, n_ie):
             mu    = x.magnitude
             sigma = std.magnitude
-            n     = int(n.magnitude)
 
             gaussian_diff = np.random.normal(mu, sigma, size = n)*x.units
 
@@ -92,7 +103,6 @@ class nexusEvent:
         for y, std, n in zip(y_hit, sigma_trans, n_ie):
             mu    = y.magnitude
             sigma = std.magnitude
-            n     = int(n.magnitude)
 
             gaussian_diff = np.random.normal(mu, sigma, size = n)*y.units
 
@@ -110,7 +120,7 @@ class nexusEvent:
         self.ElectronsFinalAlpha        = np.arctan2(self.ElectronsFinalY, self.ElectronsFinalX).to(unit.rad)
 
 
-class FiberBarrelTPC:
+class HPGXeTPC:
     def __init__(self, 
                  inner_rad          = 0 *unit.mm, 
                  outer_rad          = 500 *unit.mm, 
@@ -130,25 +140,25 @@ class FiberBarrelTPC:
         self.NPanels            = n_panels
         self.DeltaTheta         = 2*math.pi/self.NPanels  *unit.rad      
 
-        self.bb0nuEnergyInXe  = (2458 *unit.keV).to(unit.eV)
-        self.XeIonization     = (12.13 *unit.eV).to(unit.eV)
+        self.bb0nuEnergyInXe    = (2458 *unit.keV).to(unit.eV) # ref: (https://arxiv.org/abs/1804.01780)
+        self.KrDecayEnergy      = (41.5 *unit.keV).to(unit.eV) # ref: (https://arxiv.org/abs/1804.01780)
 
-        self.KrDecayEnergy    = (41.5 *unit.keV).to(unit.eV)
-        self.KrIonization     = (13.9996 *unit.keV).to(unit.eV)
+        self.HPGXeIonization    = (22 *unit.eV).to(unit.eV) # ref: (https://doi.org/10.1016/j.nima.2009.10.076)
+        self.HPGXeFano          = 0.15 # ref: (https://doi.org/10.1016/j.nima.2009.10.076)
 
     def SetActiveDriftVelocity(self, drift_velocity = 1e-3 *unit.mm/unit.ns):
         self.ActiveDriftVelocity = drift_velocity.to(unit.mm/unit.ns)
 
     def SetActiveTransDiffusion(self, drift_trans_diff = 1. *unit.mm/(unit.cm**.5)):
-        # value reference: nexus simulation
+        # ref: nexus simulation
         self.ActiveTransDiffusion = drift_trans_diff.to(unit.mm/(unit.mm**.5))
 
     def SetActiveLongDiffusion(self, drift_long_diff = .3 *unit.mm/(unit.cm**.5)):
-        # value reference: nexus simulation
+        # ref: nexus simulation
         self.ActiveLongDiffusion = drift_long_diff.to(unit.mm/(unit.mm**.5))
 
     def SetRecombinationFactor(self, recombi_factor = 0.026):
-        # value reference: (https://iopscience.iop.org/article/10.1088/1748-0221/10/03/P03025/pdf)
+        # ref: (https://iopscience.iop.org/article/10.1088/1748-0221/10/03/P03025/pdf)
         self.RecombinationFactor = recombi_factor
 
     def SetElectronLifetime(self, lifetime = 1e7 *unit.ns):
@@ -354,7 +364,11 @@ class s2Signal:
         BuildSensorsDict(TPC)
         nexusEvent.AddDriftAndDiffusion(TPC)
 
-        self.EventID    = nexusEvent.EventID
+        self.EventID            = nexusEvent.EventID
+        self.SensorResponse     = {}
+
+        prim_e_r                = nexusEvent.PrimaryElectronR.to(unit.mm)
+        self.PrimaryElectronsR  = prim_e_r.magnitude.astype(np.float32) # [mm]
 
         if nexusEvent.NIonElectrons.sum() > 0:
 
@@ -364,10 +378,7 @@ class s2Signal:
             time_data   = (time_data + t_delay).to(unit.ns) # [ns]
             t_values    = time_data.magnitude.astype(np.float32)
 
-            prim_e_r                = nexusEvent.PrimaryElectronR.to(unit.mm)
-            self.PrimaryElectronsR  = prim_e_r.magnitude.astype(np.float32) # [mm]
-            self.Time               = t_values *unit.ns# [ns]
-            self.SensorResponse     = {}
+            self.Time   = t_values *unit.ns# [ns]
 
             for jj, sens_id in enumerate(TPC.SensorsIDs[:]):
 
@@ -381,6 +392,13 @@ class s2Signal:
                 self.SensorResponse[sens_id]    = s2_values # [pes]
             
             print(f'{processing_message} Signal created succesfully :)', end = '\r')
+
+        else:
+            print(f'This event produced no signal!')
+            self.Time   = 0 *unit.ns# [ns]
+            for jj, sens_id in enumerate(TPC.SensorsIDs[:]):
+                self.SensorResponse[sens_id]    = 0
+
 
 
     def AddShapinAndSamplin(self, shapin_tau = 155 *unit.ns, samplin_rate = 25 *unit.ns, t_binin = 0.1 *unit.ns):
@@ -471,23 +489,20 @@ class s2Signal:
 
             if units == 'mV':
                 waveform    = ConvertTomV(self.SignalShapedSampled[sensor], impedance_in_ohm)
-                ax.set_ylabel('Signal [mV]', fontsize = font_size);
 
             elif units == 'mA':
                 waveform    = ConvertTomA(self.SignalShapedSampled[sensor])
-                ax.set_ylabel('Signal [mA]', fontsize = font_size);
 
             elif units == 'pes/ns':
                 waveform    = self.SignalShapedSampled[sensor]
-                ax.set_ylabel('Signal [pes/ns]', fontsize = font_size);
 
             else:
                 raise ValueError("Invalid units: choose among mV, pes/ns or mA")
 
-            samplin_rate    = self.SamplinRate.to(unit.us)
-            tau             = self.ShapinDecayConstant.to(unit.ns)
+            samplin_rate    = self.SamplinRate
+            tau             = self.ShapinDecayConstant
             label           = ("SiPM response: \n"
-                               f"Sampling rate = {samplin_rate.magnitude:.2E}[{samplin_rate.units:~}] \n"
+                               f"Sampling rate = {samplin_rate.magnitude:.2f}[{samplin_rate.units:~}] \n"
                                fr"$\tau$ = {tau.magnitude:.2f}[{tau.units:~}]"
                                )
             ax.plot(t.magnitude, waveform, label = label)
@@ -499,14 +514,17 @@ class s2Signal:
             waveform    = self.SensorResponse[sensor]
 
             _, _, _ = ax.hist(t.magnitude, 
-                              bins = 100, 
-                              weights = waveform);
+                              bins      = 100, 
+                              weights   = waveform,
+                              label     = 's2 waveform un-sampled and un-shaped'
+                              );
 
-            ax.set_ylabel('Signal [pes]', fontsize = font_size);
+            units = 'pes'
             
 
         ax.set_title(f's2 of event {event} in {sensor}', fontsize = font_size);
         ax.set_xlabel(f'Time [{t.units:~}]', fontsize = font_size);
+        ax.set_ylabel(f'Signal [{units}]', fontsize = font_size);
 
         ax.tick_params(axis='both', labelsize = font_size*2/3);
 
@@ -528,37 +546,41 @@ def DynamicRange(s2table,
         # Read only the event_id column
         event_ids = pd.read_hdf(event_path, "/MC/hits", columns=['event_id'])
         # Get the maximum value of event_id
-        max_event_id = event_ids['event_id'].max()
+        n_events = event_ids['event_id'].max() + 1
 
-        for event in range(max_event_id):
+        for event in range(n_events):
+        # for event in range(0, 1):
 
             if (((event)%1 == 0) or event == 0):
-                processing_message = f'Dynamic range (Processing event {event + 1}/{max_event_id + 1} in file {ii+1}/{len(list_of_bb_paths)}...)'
-                print(processing_message + ' '*2*len(processing_message), end = '\r\n')
+                processing_message = f'Dynamic range (Processing event {event + 1}/{n_events} in file {ii+1}/{len(list_of_bb_paths)}...)'
+                print(processing_message + ' '*2*len(processing_message), end = '\r\n', flush=True)
 
             NexusEvent = nexusEvent(event_path, event)
+            if NexusEvent.Empty:
+                continue
+
             NexusEvent.AddDriftAndDiffusion(TPC)
 
             s2signal = s2Signal(s2table, TPC, NexusEvent)
             s2signal.AddShapinAndSamplin(shapin_tau, samplin_rate, t_binin)
 
             if units == 'mV':
-                waveform    = ConvertTomV(list(s2signal.SignalShapedSampled.values()), impedance_in_ohm)
+                waveform    = ConvertTomV(list(s2signal.SignalShapedSampled.values()), impedance_in_ohm) *unit.mV
 
             elif units == 'mA':
-                waveform    = ConvertTomA(list(s2signal.SignalShapedSampled.values()))
+                waveform    = ConvertTomA(list(s2signal.SignalShapedSampled.values())) *unit.mA
 
             elif units == 'pes/ns':
-                waveform    = list(s2signal.SignalShapedSampled.values())
+                waveform    = list(s2signal.SignalShapedSampled.values()) *(unit.ns**-1)
 
             else:
                 raise ValueError("Invalid units: choose among mV, pes/ns or mA")
 
-            max_value               = max(map(max, waveform))
-            event_id                = ii*(10**len(f'{max_event_id}')) + event
-            DynamicRange[event_id]  = max_value
+            max_value               = max(map(max, waveform.magnitude))
+            event_id                = ii*(10**len(f'{n_events}')) + event
+            DynamicRange[event_id]  = max_value 
 
-    return DynamicRange
+    return DynamicRange, waveform.units
 
 
 
