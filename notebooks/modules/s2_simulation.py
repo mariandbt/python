@@ -146,7 +146,8 @@ class HPGXeTPC:
         self.HPGXeIonization    = (22 *unit.eV).to(unit.eV) # ref: (https://doi.org/10.1016/j.nima.2009.10.076)
         self.HPGXeFano          = 0.15 # ref: (https://doi.org/10.1016/j.nima.2009.10.076)
 
-    def SetActiveDriftVelocity(self, drift_velocity = 1e-3 *unit.mm/unit.ns):
+    def SetActiveDriftVelocity(self, drift_velocity = 1 *unit.mm/unit.us):
+        # ref: nexus simulation
         self.ActiveDriftVelocity = drift_velocity.to(unit.mm/unit.ns)
 
     def SetActiveTransDiffusion(self, drift_trans_diff = 1. *unit.mm/(unit.cm**.5)):
@@ -231,13 +232,13 @@ class s2Table:
     
 
 
-def FindRotation(electron_final_alpha, TPC):
+def FindRotation(Electron_Final_Alpha, TPC):
 
     dtheta = TPC.DeltaTheta.magnitude
     
-    rot = np.where(electron_final_alpha > 0, 
-                   int((electron_final_alpha + dtheta/2)/dtheta),
-                   int((electron_final_alpha - dtheta/2)/dtheta)
+    rot = np.where(Electron_Final_Alpha > 0, 
+                   int((Electron_Final_Alpha + dtheta/2)/dtheta),
+                   int((Electron_Final_Alpha - dtheta/2)/dtheta)
                   )
     return rot
 FindRotation = np.vectorize(FindRotation) # Vectorize the function
@@ -333,7 +334,7 @@ def ResponseSiPM(q_in_pes, t, t0, tau):
     return normalized_signal
 
 
-def ConvertTomA(waveform_in_pes_per_ns):
+def ConvertTomA(Waveform_in_pes_per_ns):
 
     sipm_gain = 4e6 # e/pes
     e_charge = 1.6e-19 # C/e
@@ -341,18 +342,18 @@ def ConvertTomA(waveform_in_pes_per_ns):
     pes_to_C = sipm_gain*e_charge # C/pes
     ns_to_s = 1e-9 # s/ns
     
-    waveform_in_A = waveform_in_pes_per_ns*(pes_to_C/ns_to_s) # A
-    waveform_in_mA = waveform_in_A*1e3 # mA
+    Waveform_in_A = Waveform_in_pes_per_ns*(pes_to_C/ns_to_s) # A
+    Waveform_in_mA = Waveform_in_A*1e3 # mA
 
-    return waveform_in_mA
+    return Waveform_in_mA
 ConvertTomA = np.vectorize(ConvertTomA) # Vectorize the function
 
 
-def ConvertTomV(waveform_in_pes_per_ns, impedance_in_ohm = 50):
+def ConvertTomV(Waveform_in_pes_per_ns, impedance_in_ohm = 50):
 
-    waveform_in_mV = ConvertTomA(waveform_in_pes_per_ns)*impedance_in_ohm # mV
+    Waveform_in_mV = ConvertTomA(Waveform_in_pes_per_ns)*impedance_in_ohm # mV
 
-    return waveform_in_mV
+    return Waveform_in_mV
 ConvertTomV = np.vectorize(ConvertTomV) # Vectorize the function
 
 
@@ -373,7 +374,7 @@ class s2Signal:
         if nexusEvent.NIonElectrons.sum() > 0:
 
             time_data   = nexusEvent.ElectronsMeasurementTime
-            t_delay     = (TPC.Length/2 + TPC.HalfWidthEL)/TPC.DriftVelocityEL 
+            t_delay     = (nexusEvent.ElectronsFinalZ + TPC.HalfWidthEL)/TPC.DriftVelocityEL 
             t_delay     = t_delay.to(unit.ns)
             time_data   = (time_data + t_delay).to(unit.ns) # [ns]
             t_values    = time_data.magnitude.astype(np.float32)
@@ -454,7 +455,8 @@ class s2Signal:
         print(f'{processing_message} Shapin and samplin done succesfully :)' + ' '*10, end = '\r')
 
 
-    def PrintWaveform(self, sensor, 
+    def PrintWaveform(self, 
+                      sensor, 
                       shaped_and_sampled = True, 
                       units = 'mV',  # (mV, pes/ns, mA, ...) only used if shaped_and_sampled = True
                       impedance_in_ohm = 50, # only used if units_in_mV = True
@@ -478,7 +480,6 @@ class s2Signal:
 
         font_size   = 22
         event       = self.EventID
-        bin_width   = bin_width.to(unit.ns).magnitude
 
         if shaped_and_sampled:
 
@@ -509,12 +510,14 @@ class s2Signal:
 
         else:
 
-            t   = self.Time.to(unit.us) # [us]
+            t           = self.Time.to(unit.us) # [us]
+            bin_width   = bin_width.to(unit.us) # [us]
+            binin       = np.arange(t.magnitude.min() - bin_width.magnitude, t.magnitude.max() + 2*bin_width.magnitude, bin_width.magnitude)
 
             waveform    = self.SensorResponse[sensor]
 
             _, _, _ = ax.hist(t.magnitude, 
-                              bins      = 100, 
+                              bins      = binin, 
                               weights   = waveform,
                               label     = 's2 waveform un-sampled and un-shaped'
                               );
@@ -530,59 +533,112 @@ class s2Signal:
 
         return t, waveform, ax
 
-def DynamicRange(s2table, 
+
+class DynamicRange:
+    def __init__(self, 
+                 s2table, 
                  TPC, 
-                 list_of_bb_paths,
-                 shapin_tau = 155 *unit.ns,
-                 samplin_rate = 25*unit.ns,
-                 t_binin = 1*unit.ns,
-                 units = 'mV',
-                 impedance_in_ohm = 50 # only used if units = mV
+                 List_bb_Paths,
+                 fiducial_radio     = 490 *unit.mm,
+                 shapin_tau         = 155 *unit.ns,
+                 samplin_rate       = 25*unit.ns,
+                 t_binin            = 1*unit.ns,
+                 units              = 'mV',
+                 impedance_in_ohm   = 50 # only used if units = mV
                  ):
 
-    DynamicRange = {}
+        self.NSensors       = TPC.NSensors
+        self.FiducialR      = fiducial_radio
+        self.s2MaxValues    = {}
 
-    for ii, event_path in enumerate(list_of_bb_paths):
-        # Read only the event_id column
-        event_ids = pd.read_hdf(event_path, "/MC/hits", columns=['event_id'])
-        # Get the maximum value of event_id
-        n_events = event_ids['event_id'].max() + 1
+        for ii, event_path in enumerate(List_bb_Paths):
+            # Read only the event_id column
+            event_ids = pd.read_hdf(event_path, "/MC/hits", columns=['event_id'])
+            # Get the maximum value of event_id
+            n_events = event_ids['event_id'].max() + 1
 
-        for event in range(n_events):
-        # for event in range(0, 1):
+            for event in range(n_events):
+            # for event in range(0, 1):
 
-            if (((event)%1 == 0) or event == 0):
-                processing_message = f'Dynamic range (Processing event {event + 1}/{n_events} in file {ii+1}/{len(list_of_bb_paths)}...)'
-                print(processing_message + ' '*2*len(processing_message), end = '\r\n', flush=True)
+                if (((event)%1 == 0) or event == 0):
+                    processing_message = f'Dynamic range (Processing event {event + 1}/{n_events} in file {ii+1}/{len(List_bb_Paths)}...)'
+                    print(processing_message + ' '*2*len(processing_message), end = '\r\n', flush=True)
 
-            NexusEvent = nexusEvent(event_path, event)
-            if NexusEvent.Empty:
-                continue
+                NexusEvent = nexusEvent(event_path, event)
+                if NexusEvent.Empty:
+                    continue
+                
+                if NexusEvent.PrimaryElectronR > fiducial_radio:
+                    print(f'Event {NexusEvent.EventID} discarded by fiducial cut')
+                    continue
 
-            NexusEvent.AddDriftAndDiffusion(TPC)
+                NexusEvent.AddDriftAndDiffusion(TPC)
 
-            s2signal = s2Signal(s2table, TPC, NexusEvent)
-            s2signal.AddShapinAndSamplin(shapin_tau, samplin_rate, t_binin)
+                s2signal = s2Signal(s2table, TPC, NexusEvent)
+                s2signal.AddShapinAndSamplin(shapin_tau, samplin_rate, t_binin)
 
-            if units == 'mV':
-                waveform    = ConvertTomV(list(s2signal.SignalShapedSampled.values()), impedance_in_ohm) *unit.mV
+                if units == 'mV':
+                    waveform    = ConvertTomV(list(s2signal.SignalShapedSampled.values()), impedance_in_ohm) *unit.mV
 
-            elif units == 'mA':
-                waveform    = ConvertTomA(list(s2signal.SignalShapedSampled.values())) *unit.mA
+                elif units == 'mA':
+                    waveform    = ConvertTomA(list(s2signal.SignalShapedSampled.values())) *unit.mA
 
-            elif units == 'pes/ns':
-                waveform    = list(s2signal.SignalShapedSampled.values()) *(unit.ns**-1)
+                elif units == 'pes/ns':
+                    waveform    = list(s2signal.SignalShapedSampled.values()) *(unit.ns**-1)
 
-            else:
-                raise ValueError("Invalid units: choose among mV, pes/ns or mA")
+                else:
+                    raise ValueError("Invalid units: choose among mV, pes/ns or mA")
 
-            max_value               = max(map(max, waveform.magnitude))
-            event_id                = ii*(10**len(f'{n_events}')) + event
-            DynamicRange[event_id]  = max_value 
+                max_value               = max(map(max, waveform.magnitude))
+                event_id                = ii*(10**len(f'{n_events}')) + event
+                self.s2MaxValues[event_id]  = max_value 
 
-    return DynamicRange, waveform.units
+        self.Units      = waveform.units
+        self.NEvents    = len(self.s2MaxValues.keys())
 
 
+    def PrintHist(self, bin_width = 250, logscale = False):
 
+        fig, ax = plt.subplots(nrows = 1, ncols = 1, figsize=(7,7), constrained_layout=True)
+        font_size = 20
+
+        s2 = np.array(list(self.s2MaxValues.values()))
+        n_events = len(s2)
+        binin = np.arange(s2.min() - bin_width, s2.max() + 2*bin_width, bin_width)
+
+        events, bins, bars = ax.hist(s2, binin,
+                                    density=False,
+                                    label='s2 max value in each event distribution',
+                                    histtype='step')
+
+
+        ax.text(0.6, .85, 'max value =%.2f'%(s2.max()),
+        transform=ax.transAxes, fontsize=0.5*font_size, bbox=dict(facecolor='1.', edgecolor='none', pad=3.0))
+
+        ax.text(0.6, .8, '$\mu$=%.2f'%(s2.mean()),
+        transform=ax.transAxes, fontsize=0.5*font_size, bbox=dict(facecolor='1.', edgecolor='none', pad=3.0))
+
+        ax.text(0.6, .75, '$\sigma$=%.2f'%(s2.std()),
+        transform=ax.transAxes, fontsize=0.5*font_size, bbox=dict(facecolor='1.', edgecolor='none', pad=3.0))
+
+        ax.text(0.6, .7, '$N_{entries}$ = %s'%(int(events.sum())),
+        transform=ax.transAxes, fontsize=0.5*font_size, bbox=dict(facecolor='1.', edgecolor='none', pad=3.0))
+
+        ax.text(0.6, .65, f'Fiducial radio cut = {self.FiducialR.magnitude:.2f} [{self.FiducialR.units:~}]',
+        transform=ax.transAxes, fontsize=0.5*font_size, bbox=dict(facecolor='1.', edgecolor='none', pad=3.0))
+
+
+        ax.set_title(f'Max s2 signal of all {self.NSensors} sensors for {self.NEvents} events', fontsize = font_size);
+        ax.set_xlabel('s2 signal max [pes]', fontsize = font_size);
+        ax.set_ylabel('Counts', fontsize = font_size);
+        
+        if logscale:
+            ax.set_yscale('log')
+
+        ax.legend(fontsize=0.7*font_size, loc='best')
+
+        ax.tick_params(axis='both', labelsize = font_size*2/3)
+
+        return events, bins, ax
 
 
