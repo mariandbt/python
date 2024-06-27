@@ -606,7 +606,7 @@ def CreateSignalHDF5(hdf5output_path,
     empty_df = pd.DataFrame()
 
     # Save the empty DataFrame to a .h5 file
-    empty_df.to_hdf(hdf5output_path, key='/s2simulation/configuration', mode='w')
+    empty_df.to_hdf(hdf5output_path, key='/s2simulation/configuration', mode='w', format = 'table')
 
     # Signal
     event_id    = 0
@@ -640,24 +640,8 @@ def CreateSignalHDF5(hdf5output_path,
 
                     event_df, signal_df    = s2signal.CreateS2DataFrames(event_id, event_type, units, impedance_in_ohm)
 
-                    event_df.to_hdf(hdf5output_path, 
-                                    key='/s2simulation/events', 
-                                    mode='a',
-                                    format='table', 
-                                    index=False,
-                                    data_columns=True,
-                                    append=True
-                                   )
-
-
-                    signal_df.to_hdf(hdf5output_path, 
-                                     key='/s2simulation/s2', 
-                                     mode='a',
-                                     format='table', 
-                                     index=False,
-                                     data_columns=True,
-                                     append=True
-                                    )
+                    safe_write_to_hdf(event_df, hdf5output_path, '/s2simulation/events')
+                    safe_write_to_hdf(signal_df, hdf5output_path, '/s2simulation/s2')
                     
                     event_id    = event_id + 1
                 
@@ -694,19 +678,17 @@ def CreateSignalHDF5(hdf5output_path,
                                                      shapin_tau.units
                                                     ])
     config_df = pd.DataFrame(config_df)
-    
+
     # Store the configuration DataFrame using pandas
-    config_df.to_hdf(hdf5output_path, 
-                     key='/s2simulation/configuration', 
-                     mode='a', 
-                     format='table', 
-                     index=False,
-                     data_columns=True
-                    )
+    safe_write_to_hdf(config_df, hdf5output_path, '/s2simulation/configuration')
+    
     
     print(f"Data has been written to {hdf5output_path} :)")
 
-    
+def safe_write_to_hdf(df, path, key):
+    with pd.HDFStore(path, 'a') as store:
+        store.append(key, df, format='table', data_columns=True, index=False)
+
 # **************************************************************************************************************************************
 # **************************************************************************************************************************************
 # **************************************************************************************************************************************
