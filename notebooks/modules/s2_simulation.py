@@ -8,8 +8,9 @@ class InvalidUnitInputError(Exception):
     pass
 
 class nexusEvent:
-    def __init__(self, nexus_event_path, event_id):
+    def __init__(self, nexus_event_path, event_id, event_type = 'bb0nu'):
 
+        self.EventType  = event_type
         self.EventID    = event_id
 
         hits            = pd.read_hdf(nexus_event_path, "/MC/hits")
@@ -32,7 +33,7 @@ class nexusEvent:
             self.PrimaryElectronR   = np.sqrt(self.PrimaryElectronX**2 + self.PrimaryElectronY**2)
 
 
-    def AddDriftAndDiffusion(self, TPC, event_type = 'bb0nu'):
+    def AddDriftAndDiffusion(self, TPC):
 
         hit_e   = self.HitsEnergy
 
@@ -195,9 +196,11 @@ class HPGXeTPC:
 
 
 class s2Table:
-    def __init__(self, s2_table_path):
+    def __init__(self, s2_table_path, light_yield = 1050, n_ie = 50000):
 
-        self.FilePath   = s2_table_path
+        self.FilePath       = s2_table_path
+        self.LightYield     = light_yield # [ph/ie⁻]
+        self.Nie            = n_ie # number of ie⁻ used to create the table
 
         s2_table    = setup.read_s2_table(self.FilePath)
         s2_tab      = s2_table['sens_200']
@@ -365,6 +368,7 @@ class s2Signal:
         BuildSensorsDict(TPC)
         nexusEvent.AddDriftAndDiffusion(TPC)
 
+        self.EventType          = nexusEvent.EventType
         self.EventID            = nexusEvent.EventID
         self.SensorResponse     = {}
 
@@ -534,11 +538,223 @@ class s2Signal:
         return t, waveform, ax
 
 
+    def CreateS2DataFrames(self, 
+                           event_id, 
+                           event_type,
+                           units = 'pes/ns',
+                           impedance_in_ohm   = 50 # only used if units = mV
+                          ):
+
+        # Create a dictionary for this event's signal
+        # Event info
+        event_df                = {}
+        event_df['event_id']    = [event_id]
+        event_df['N_ie']        = [len(self.Time)] # Number of ionization electrons
+        event_df['event_type']  = [event_type]
+
+        # Waveforms
+        s2_df                   = {}
+        s2_df['event_id']       = event_id
+
+        
+        # s2 waveform
+        if units == 'mV':
+            waveform    = ConvertTomV(list(self.SignalShapedSampled.values()), impedance_in_ohm)
+
+        elif units == 'mA':
+            waveform    = ConvertTomA(list(self.SignalShapedSampled.values()))
+
+        elif units == 'pes/ns':
+            waveform    = list(self.SignalShapedSampled.values())
+
+        else:
+            raise ValueError("Invalid units: choose among mV, pes/ns or mA")
+
+        # Time
+        nt                  = len(waveform[0])
+        dt                  = self.SamplinRate.to(unit.ns).magnitude
+        t0                  = self.Time.to(unit.ns).magnitude.min()
+        t                   = np.linspace(t0, t0 + nt*dt, nt) # [ns]
+        s2_df['time']       = t.astype(np.float32)
+        
+        # Dynamically add sensor data with the appropriate suffix
+        for sensor_id, wvf in zip(self.SignalShapedSampled.keys(), waveform):
+            column_name             = f"sensor{sensor_id}_s2"
+            s2_df[column_name]      = wvf.astype(np.float32)
+        
+        # Create a DataFrame from the event dictionary
+        event_df    = pd.DataFrame(event_df)
+        s2_df       = pd.DataFrame(s2_df)
+        
+        return event_df, s2_df
+    
+
+def CreateSignalHDF5(hdf5output_path, 
+                     s2table,
+                     TPC,
+                     Events_Dict,
+                     fiducial_radio     = 490 *unit.mm,
+                     shapin_tau         = 155 *unit.ns,
+                     samplin_rate       = 25*unit.ns,
+                     t_binin            = 1*unit.ns,
+                     units              = 'pes/ns',
+                     impedance_in_ohm   = 50 # only used if units = mV
+                    ):
+
+        
+    # Create an empty DataFrame
+    empty_df = pd.DataFrame()
+
+    # Save the empty DataFrame to a .h5 file
+    empty_df.to_hdf(hdf5output_path, key='/s2simulation/configuration', mode='w')
+
+    # Signal
+    event_id    = 0
+            
+    for jj, event_type in enumerate(Events_Dict.keys()):
+        for ii, event_path in enumerate(Events_Dict[event_type]):
+                # Read only the event_id column
+                event_ids = pd.read_hdf(event_path, "/MC/hits", columns=['event_id'])
+                # Get the maximum value of event_id
+                n_events = event_ids['event_id'].max() + 1
+
+                for event in range(n_events):
+                # for event in range(0, 1):
+
+                    if (((event)%1 == 0) or event == 0):
+                        processing_message = f'Storing {event_type}\'s signal in a DF (Processing event {event + 1}/{n_events} in file {ii+1}/{len(Events_Dict[event_type])}...)'
+                        print(processing_message + ' '*2*len(processing_message), end = '\r\n', flush=True)
+
+                    NexusEvent = nexusEvent(event_path, event, event_type)
+                    if NexusEvent.Empty:
+                        continue
+                    
+                    if NexusEvent.PrimaryElectronR > fiducial_radio:
+                        print(f'Event {NexusEvent.EventID} discarded by fiducial cut')
+                        continue
+
+                    NexusEvent.AddDriftAndDiffusion(TPC)
+
+                    s2signal = s2Signal(s2table, TPC, NexusEvent)
+                    s2signal.AddShapinAndSamplin(shapin_tau, samplin_rate, t_binin)
+
+                    event_df, signal_df    = s2signal.CreateS2DataFrames(event_id, event_type, units, impedance_in_ohm)
+
+                    event_df.to_hdf(hdf5output_path, 
+                                    key='/s2simulation/events', 
+                                    mode='a',
+                                    format='table', 
+                                    index=False,
+                                    data_columns=True,
+                                    append=True
+                                   )
+
+
+                    signal_df.to_hdf(hdf5output_path, 
+                                     key='/s2simulation/s2', 
+                                     mode='a',
+                                     format='table', 
+                                     index=False,
+                                     data_columns=True,
+                                     append=True
+                                    )
+                    
+                    event_id    = event_id + 1
+                
+    # Configuration dataframe
+    config_df                   = {}
+    config_df['ParameterName']  = ['NEvents',
+                                   'NSensors',
+                                   'S2LightYield',
+                                   'S2TableStatistics',
+                                   'FiducialRadio',
+                                   'Time (see s2 table)', 
+                                   'Signal (see s2 table)', 
+                                   'SamplingRate', 
+                                   'ShapingDecayConstant'
+                                  ]
+    config_df['ParameterValue'] = [event_id,
+                                   TPC.NSensors,
+                                   s2table.LightYield,
+                                   s2table.Nie,
+                                   float(fiducial_radio.magnitude),
+                                   None,
+                                   None,
+                                   float(samplin_rate.magnitude),
+                                   float(shapin_tau.magnitude)
+                                  ]
+    config_df['ParameterUnits'] = np.vectorize(str)([unit.dimensionless,
+                                                     unit.dimensionless,
+                                                     'photons/ie⁻',
+                                                     'ie⁻',
+                                                     fiducial_radio.units,
+                                                     unit.ns,
+                                                     units,
+                                                     samplin_rate.units,
+                                                     shapin_tau.units
+                                                    ])
+    config_df = pd.DataFrame(config_df)
+    
+    # Store the configuration DataFrame using pandas
+    config_df.to_hdf(hdf5output_path, 
+                     key='/s2simulation/configuration', 
+                     mode='a', 
+                     format='table', 
+                     index=False,
+                     data_columns=True
+                    )
+    
+    print(f"Data has been written to {hdf5output_path} :)")
+
+    
+# **************************************************************************************************************************************
+# **************************************************************************************************************************************
+# **************************************************************************************************************************************
+# **************************************************************************************************************************************
+# **************************************************************************************************************************************
+# **************************************************************************************************************************************
+# **************************************************************************************************************************************
+# **************************************************************************************************************************************
+# **************************************************************************************************************************************
+# **************************************************************************************************************************************
+# **************************************************************************************************************************************
+# **************************************************************************************************************************************
+    
+def CreateHDF5(self, hdf5output_path):
+
+    df_configuration = pd.DataFrame({'ParameterName': ['NEvents', 'NSensors', 'DynRangeUnits','FiducialRadio', 'FiducialRadioUnits'],
+                                        'ParameterValue': np.vectorize(str)([self.NEvents, self.NSensors, str(self.Units),
+                                                                    self.FiducialR.magnitude, str(self.FiducialR.units)])
+                                    })
+
+    # Convert s2MaxValues to a DataFrame
+    df_s2MaxValues = pd.DataFrame(list(self.s2TotalEnergy.items()), columns=['event', 'energy'])
+
+    # Store the s2MaxValues DataFrame using pandas
+    df_s2MaxValues.to_hdf(hdf5output_path, 
+                            key='/s2simulation/TotalEnergy', 
+                            mode='w', 
+                            format='table', 
+                            index=False,
+                            data_columns=True
+                            )
+    
+
+    df_configuration.to_hdf(hdf5output_path, key='/s2simulation/configuration', 
+                            mode='a',
+                            format='table', 
+                            index=False,
+                            data_columns=True)
+
+    print(f"Data has been written to {hdf5output_path} :)")
+
+
+
 class DynamicRange:
     def __init__(self, 
                  s2table, 
                  TPC, 
-                 List_bb_Paths,
+                 List_Events_Paths,
                  fiducial_radio     = 490 *unit.mm,
                  shapin_tau         = 155 *unit.ns,
                  samplin_rate       = 25*unit.ns,
@@ -551,7 +767,7 @@ class DynamicRange:
         self.FiducialR      = fiducial_radio
         self.s2MaxValues    = {}
 
-        for ii, event_path in enumerate(List_bb_Paths):
+        for ii, event_path in enumerate(List_Events_Paths):
             # Read only the event_id column
             event_ids = pd.read_hdf(event_path, "/MC/hits", columns=['event_id'])
             # Get the maximum value of event_id
@@ -561,7 +777,7 @@ class DynamicRange:
             # for event in range(0, 1):
 
                 if (((event)%1 == 0) or event == 0):
-                    processing_message = f'Dynamic range (Processing event {event + 1}/{n_events} in file {ii+1}/{len(List_bb_Paths)}...)'
+                    processing_message = f'Dynamic range (Processing event {event + 1}/{n_events} in file {ii+1}/{len(List_Events_Paths)}...)'
                     print(processing_message + ' '*2*len(processing_message), end = '\r\n', flush=True)
 
                 NexusEvent = nexusEvent(event_path, event)
@@ -589,8 +805,8 @@ class DynamicRange:
                 else:
                     raise ValueError("Invalid units: choose among mV, pes/ns or mA")
 
-                max_value               = max(map(max, waveform.magnitude))
-                event_id                = ii*(10**len(f'{n_events}')) + event
+                max_value                   = max(map(max, waveform.magnitude))
+                event_id                    = ii*(10**len(f'{n_events}')) + event
                 self.s2MaxValues[event_id]  = max_value 
 
         self.Units      = waveform.units
@@ -607,9 +823,9 @@ class DynamicRange:
         binin = np.arange(s2.min() - bin_width, s2.max() + 2*bin_width, bin_width)
 
         events, bins, bars = ax.hist(s2, binin,
-                                    density=False,
-                                    label='s2 max value in each event distribution',
-                                    histtype='step')
+                                     density=False,
+                                     label='s2 max value in each event distribution',
+                                     histtype='step')
 
 
         ax.text(0.6, .85, 'max value =%.2f'%(s2.max()),
@@ -629,7 +845,7 @@ class DynamicRange:
 
 
         ax.set_title(f'Max s2 signal of all {self.NSensors} sensors for {self.NEvents} events', fontsize = font_size);
-        ax.set_xlabel('s2 signal max [pes]', fontsize = font_size);
+        ax.set_xlabel(f's2 signal max [{self.Units:~}]', fontsize = font_size);
         ax.set_ylabel('Counts', fontsize = font_size);
         
         if logscale:
@@ -640,5 +856,185 @@ class DynamicRange:
         ax.tick_params(axis='both', labelsize = font_size*2/3)
 
         return events, bins, ax
+
+    def CreateHDF5(self, hdf5output_path):
+
+        df_configuration = pd.DataFrame({'ParameterName': ['NEvents', 'NSensors', 'DynRangeUnits','FiducialRadio', 'FiducialRadioUnits'],
+                                         'ParameterValue': np.vectorize(str)([self.NEvents, self.NSensors, str(self.Units),
+                                                                       self.FiducialR.magnitude, str(self.FiducialR.units)])
+                                        })
+
+        # Convert s2MaxValues to a DataFrame
+        df_s2MaxValues = pd.DataFrame(list(self.s2MaxValues.items()), columns=['event', 's2max'])
+
+        # Store the s2MaxValues DataFrame using pandas
+        df_s2MaxValues.to_hdf(hdf5output_path, 
+                              key='/s2simulation/DynamicRange', 
+                              mode='w', 
+                              format='table', 
+                              index=False,
+                              data_columns=True
+                              )
+        
+
+        df_configuration.to_hdf(hdf5output_path, key='/s2simulation/configuration', 
+                                mode='a',
+                                format='table', 
+                                index=False,
+                                data_columns=True)
+
+        print(f"Data has been written to {hdf5output_path} :)")
+
+
+class EnergyResolution:
+    def __init__(self, 
+                 s2table, 
+                 TPC, 
+                 List_Events_Paths,
+                 fiducial_radio     = 490 *unit.mm,
+                 shaped             = False,
+                 shapin_tau         = 155 *unit.ns,     # only used if shaped == True   
+                 samplin_rate       = 25*unit.ns,       # only used if shaped == True
+                 t_binin            = 1*unit.ns,        # only used if shaped == True
+                 units              = 'mV',
+                 impedance_in_ohm   = 50                # only used if units == mV
+                 ):
+
+        self.NSensors       = TPC.NSensors
+        self.FiducialR      = fiducial_radio
+        self.s2TotalEnergy  = {}
+
+        for ii, event_path in enumerate(List_Events_Paths):
+            # Read only the event_id column
+            event_ids = pd.read_hdf(event_path, "/MC/hits", columns=['event_id'])
+            # Get the maximum value of event_id
+            n_events = event_ids['event_id'].max() + 1
+
+            for event in range(n_events):
+            # for event in range(0, 1):
+
+                if (((event)%1 == 0) or event == 0):
+                    processing_message = f'Energy resolution (Processing event {event + 1}/{n_events} in file {ii+1}/{len(List_Events_Paths)}...)'
+                    print(processing_message + ' '*2*len(processing_message), end = '\r\n', flush=True)
+
+                NexusEvent = nexusEvent(event_path, event)
+                if NexusEvent.Empty:
+                    continue
+                
+                if NexusEvent.PrimaryElectronR > fiducial_radio:
+                    print(f'Event {NexusEvent.EventID} discarded by fiducial cut')
+                    continue
+
+                NexusEvent.AddDriftAndDiffusion(TPC)
+
+                s2signal = s2Signal(s2table, TPC, NexusEvent)
+
+                if shaped:
+                    s2signal.AddShapinAndSamplin(shapin_tau, samplin_rate, t_binin)
+
+                    if units == 'mV':
+                        waveform    = ConvertTomV(list(s2signal.SignalShapedSampled.values()), impedance_in_ohm) *unit.mV
+
+                    elif units == 'mA':
+                        waveform    = ConvertTomA(list(s2signal.SignalShapedSampled.values())) *unit.mA
+
+                    elif units == 'pes/ns':
+                        waveform    = list(s2signal.SignalShapedSampled.values()) *(unit.ns**-1)
+
+                    else:
+                        raise ValueError("Invalid units: choose among mV, pes/ns or mA")
+                    
+                    nt      = len(waveform[0])
+                    dt      = s2signal.SamplinRate.to(unit.us).magnitude
+                    t0      = s2signal.Time.to(unit.us).magnitude.min()
+                    t       = np.linspace(t0, t0 + nt*dt, nt) # [us]
+                    wvf     = waveform.magnitude
+
+                else:
+                    orderin         = np.argsort(s2signal.Time.magnitude)
+                    waveform        = list(s2signal.SensorResponse.values()) *unit.dimensionless # [pes]
+                    t               = s2signal.Time.to(unit.us).magnitude[orderin]
+                    wvf             = np.stack(waveform.magnitude)[:, orderin]
+                
+
+                total_energy                    = np.trapz(x = t, y = wvf).sum()
+                event_id                        = ii*(10**len(f'{n_events}')) + event
+                self.s2TotalEnergy[event_id]    = total_energy 
+
+        self.Units      = waveform.units
+        self.NEvents    = len(self.s2TotalEnergy.keys())
+
+    def PrintSpectrum(self, bin_width = 10, logscale = False):
+
+        fig, ax = plt.subplots(nrows = 1, ncols = 1, figsize=(7,7), constrained_layout=True)
+        font_size = 20
+
+        energy = np.array(list(self.s2TotalEnergy.values()))
+        n_events = len(energy)
+        binin = np.arange(energy.min() - bin_width, energy.max() + 2*bin_width, bin_width)
+
+        events, bins, bars = ax.hist(energy, binin,
+                                    density=False,
+                                    label='Total energy value in each event distribution',
+                                    histtype='step')
+
+
+        ax.text(0.6, .85, 'max value =%.2f'%(energy.max()),
+        transform=ax.transAxes, fontsize=0.5*font_size, bbox=dict(facecolor='1.', edgecolor='none', pad=3.0))
+
+        ax.text(0.6, .8, '$\mu$=%.2f'%(energy.mean()),
+        transform=ax.transAxes, fontsize=0.5*font_size, bbox=dict(facecolor='1.', edgecolor='none', pad=3.0))
+
+        ax.text(0.6, .75, '$\sigma$=%.2f'%(energy.std()),
+        transform=ax.transAxes, fontsize=0.5*font_size, bbox=dict(facecolor='1.', edgecolor='none', pad=3.0))
+
+        ax.text(0.6, .7, '$N_{entries}$ = %s'%(int(events.sum())),
+        transform=ax.transAxes, fontsize=0.5*font_size, bbox=dict(facecolor='1.', edgecolor='none', pad=3.0))
+
+        ax.text(0.6, .65, f'Fiducial radio cut = {self.FiducialR.magnitude:.2f} [{self.FiducialR.units:~}]',
+        transform=ax.transAxes, fontsize=0.5*font_size, bbox=dict(facecolor='1.', edgecolor='none', pad=3.0))
+
+
+        ax.set_title(f'Total energy of all {self.NSensors} sensors for {self.NEvents} events', fontsize = font_size);
+        ax.set_xlabel(f'Event energy [{self.Units:~}]', fontsize = font_size);
+        ax.set_ylabel('Counts', fontsize = font_size);
+        
+        if logscale:
+            ax.set_yscale('log')
+
+        ax.legend(fontsize=0.7*font_size, loc='best')
+
+        ax.tick_params(axis='both', labelsize = font_size*2/3)
+
+        return events, bins, ax
+
+    
+    def CreateHDF5(self, hdf5output_path):
+
+        df_configuration = pd.DataFrame({'ParameterName': ['NEvents', 'NSensors', 'DynRangeUnits','FiducialRadio', 'FiducialRadioUnits'],
+                                         'ParameterValue': np.vectorize(str)([self.NEvents, self.NSensors, str(self.Units),
+                                                                       self.FiducialR.magnitude, str(self.FiducialR.units)])
+                                        })
+
+        # Convert s2MaxValues to a DataFrame
+        df_s2MaxValues = pd.DataFrame(list(self.s2TotalEnergy.items()), columns=['event', 'energy'])
+
+        # Store the s2MaxValues DataFrame using pandas
+        df_s2MaxValues.to_hdf(hdf5output_path, 
+                              key='/s2simulation/TotalEnergy', 
+                              mode='w', 
+                              format='table', 
+                              index=False,
+                              data_columns=True
+                              )
+        
+
+        df_configuration.to_hdf(hdf5output_path, key='/s2simulation/configuration', 
+                                mode='a',
+                                format='table', 
+                                index=False,
+                                data_columns=True)
+
+        print(f"Data has been written to {hdf5output_path} :)")
 
 
