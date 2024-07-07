@@ -317,16 +317,13 @@ def FindS2(sensor_id, nexusEvent, s2Table, TPC):
 
     return s2_signal
 
-def ResponseSiPM(q_in_pes, t, t0, tau):
+def ResponseSiPM(q_in_pes, t, t0, rise_time, decay_time):
 
     """
-    NOTE: units of t, t0, tau and (tau * rise_time) must be the same
+    NOTE: units of t, t0, rise_time and decay_time must be the same
     """
-    # SiPM response parameters
-    rise_time = 1 # Rise time constant
-
-    rise_term = 1 - np.exp(-(t - t0) / (tau * rise_time))
-    decay_term = np.exp(-(t - t0) / tau)
+    rise_term = 1 - np.exp(-(t - t0) / rise_time)
+    decay_term = np.exp(-(t - t0) / decay_time)
 
     signal = (rise_term * decay_term)
     signal[t<t0] = 0
@@ -406,8 +403,9 @@ class s2Signal:
 
 
 
-    def AddShapinAndSamplin(self, shapin_tau = 155 *unit.ns, samplin_rate = 25 *unit.ns, t_binin = 0.1 *unit.ns):
+    def AddShapinAndSamplin(self, shaping_rise = 25 *unit.ns, shapin_tau = 25 *unit.ns, samplin_rate = 25 *unit.ns, t_binin = 0.1 *unit.ns):
 
+        shaping_rise    = shaping_rise.to(unit.ns).magnitude
         shapin_tau      = shapin_tau.to(unit.ns).magnitude
         samplin_rate    = samplin_rate.to(unit.ns).magnitude
         t_binin         = t_binin.to(unit.ns).magnitude
@@ -427,7 +425,7 @@ class s2Signal:
 
         # for the Shaping
         bin_means               = (bin_edges[:-1] + bin_edges[1:])/2
-        generic_sipm_response   = ResponseSiPM(1, bin_means, bin_means.mean(), shapin_tau)
+        generic_sipm_response   = ResponseSiPM(1, bin_means, bin_means.mean(), shaping_rise, shapin_tau)
 
         # for the Samplin
         samplin_step = int(samplin_rate//t_binin)
@@ -593,10 +591,11 @@ def CreateSignalHDF5(hdf5output_path,
                      s2table,
                      TPC,
                      Events_Dict,
-                     fiducial_radio     = 490 *unit.mm,
-                     shapin_tau         = 155 *unit.ns,
-                     samplin_rate       = 25*unit.ns,
-                     t_binin            = 1*unit.ns,
+                     fiducial_radio     = 490   *unit.mm,
+                     shapin_rise        = 25    *unit.ns,
+                     shapin_tau         = 25    *unit.ns,
+                     samplin_rate       = 25    *unit.ns,
+                     t_binin            = 1     *unit.ns,
                      units              = 'pes/ns',
                      impedance_in_ohm   = 50 # only used if units = mV
                     ):
@@ -636,7 +635,7 @@ def CreateSignalHDF5(hdf5output_path,
                     # NexusEvent.AddDriftAndDiffusion(TPC) # already included in s2Signal initialization
 
                     s2signal = s2Signal(s2table, TPC, NexusEvent)
-                    s2signal.AddShapinAndSamplin(shapin_tau, samplin_rate, t_binin)
+                    s2signal.AddShapinAndSamplin(shapin_rise, shapin_tau, samplin_rate, t_binin)
 
                     event_df, signal_df    = s2signal.CreateS2DataFrames(event_id, event_type, units, impedance_in_ohm)
 
@@ -735,7 +734,8 @@ class DynamicRange:
                  TPC, 
                  List_Events_Paths,
                  fiducial_radio     = 490 *unit.mm,
-                 shapin_tau         = 155 *unit.ns,
+                 shapin_rise        = 25 *unit.ns,
+                 shapin_tau         = 25 *unit.ns,
                  samplin_rate       = 25*unit.ns,
                  t_binin            = 1*unit.ns,
                  units              = 'mV',
@@ -770,7 +770,7 @@ class DynamicRange:
                 # NexusEvent.AddDriftAndDiffusion(TPC)
 
                 s2signal = s2Signal(s2table, TPC, NexusEvent)
-                s2signal.AddShapinAndSamplin(shapin_tau, samplin_rate, t_binin)
+                s2signal.AddShapinAndSamplin(shapin_rise, shapin_tau, samplin_rate, t_binin)
 
                 if units == 'mV':
                     waveform    = ConvertTomV(list(s2signal.SignalShapedSampled.values()), impedance_in_ohm) *unit.mV
@@ -872,7 +872,8 @@ class EnergyResolution:
                  List_Events_Paths,
                  fiducial_radio     = 490 *unit.mm,
                  shaped             = False,
-                 shapin_tau         = 155 *unit.ns,     # only used if shaped == True   
+                 shapin_rise        = 25 *unit.ns,
+                 shapin_tau         = 25 *unit.ns,     # only used if shaped == True   
                  samplin_rate       = 25*unit.ns,       # only used if shaped == True
                  t_binin            = 1*unit.ns,        # only used if shaped == True
                  units              = 'mV',
@@ -909,7 +910,7 @@ class EnergyResolution:
                 s2signal = s2Signal(s2table, TPC, NexusEvent)
 
                 if shaped:
-                    s2signal.AddShapinAndSamplin(shapin_tau, samplin_rate, t_binin)
+                    s2signal.AddShapinAndSamplin(shapin_rise, shapin_tau, samplin_rate, t_binin)
 
                     if units == 'mV':
                         waveform    = ConvertTomV(list(s2signal.SignalShapedSampled.values()), impedance_in_ohm) *unit.mV
