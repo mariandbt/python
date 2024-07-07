@@ -29,6 +29,10 @@ def check_h5(file_path):
         print(file)
 
 
+def safe_write_to_hdf(df, path, key):
+    with pd.HDFStore(path, 'a') as store:
+        store.append(key, df, format='table', data_columns=True, index=False)
+
 
 def read_fiber_sens(file_path):
     """

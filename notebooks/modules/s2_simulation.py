@@ -196,7 +196,7 @@ class HPGXeTPC:
 
 
 class s2Table:
-    def __init__(self, s2_table_path, light_yield = 1050, n_ie = 50000):
+    def __init__(self, s2_table_path, light_yield = 1050, n_ie = 500*100e3):
 
         self.FilePath       = s2_table_path
         self.LightYield     = light_yield # [ph/ie⁻]
@@ -633,15 +633,15 @@ def CreateSignalHDF5(hdf5output_path,
                         print(f'Event {NexusEvent.EventID} discarded by fiducial cut')
                         continue
 
-                    NexusEvent.AddDriftAndDiffusion(TPC)
+                    # NexusEvent.AddDriftAndDiffusion(TPC) # already included in s2Signal initialization
 
                     s2signal = s2Signal(s2table, TPC, NexusEvent)
                     s2signal.AddShapinAndSamplin(shapin_tau, samplin_rate, t_binin)
 
                     event_df, signal_df    = s2signal.CreateS2DataFrames(event_id, event_type, units, impedance_in_ohm)
 
-                    safe_write_to_hdf(event_df, hdf5output_path, '/s2simulation/events')
-                    safe_write_to_hdf(signal_df, hdf5output_path, '/s2simulation/s2')
+                    setup.safe_write_to_hdf(event_df, hdf5output_path, '/s2simulation/events')
+                    setup.safe_write_to_hdf(signal_df, hdf5output_path, '/s2simulation/s2')
                     
                     event_id    = event_id + 1
                 
@@ -680,14 +680,11 @@ def CreateSignalHDF5(hdf5output_path,
     config_df = pd.DataFrame(config_df)
 
     # Store the configuration DataFrame using pandas
-    safe_write_to_hdf(config_df, hdf5output_path, '/s2simulation/configuration')
+    setup.safe_write_to_hdf(config_df, hdf5output_path, '/s2simulation/configuration')
     
     
     print(f"Data has been written to {hdf5output_path} :)")
 
-def safe_write_to_hdf(df, path, key):
-    with pd.HDFStore(path, 'a') as store:
-        store.append(key, df, format='table', data_columns=True, index=False)
 
 # **************************************************************************************************************************************
 # **************************************************************************************************************************************
@@ -770,7 +767,7 @@ class DynamicRange:
                     print(f'Event {NexusEvent.EventID} discarded by fiducial cut')
                     continue
 
-                NexusEvent.AddDriftAndDiffusion(TPC)
+                # NexusEvent.AddDriftAndDiffusion(TPC)
 
                 s2signal = s2Signal(s2table, TPC, NexusEvent)
                 s2signal.AddShapinAndSamplin(shapin_tau, samplin_rate, t_binin)
@@ -907,7 +904,7 @@ class EnergyResolution:
                     print(f'Event {NexusEvent.EventID} discarded by fiducial cut')
                     continue
 
-                NexusEvent.AddDriftAndDiffusion(TPC)
+                # NexusEvent.AddDriftAndDiffusion(TPC)
 
                 s2signal = s2Signal(s2table, TPC, NexusEvent)
 
