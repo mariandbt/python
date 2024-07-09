@@ -403,9 +403,9 @@ class s2Signal:
 
 
 
-    def AddShapinAndSamplin(self, shaping_rise = 25 *unit.ns, shapin_tau = 25 *unit.ns, samplin_rate = 25 *unit.ns, t_binin = 0.1 *unit.ns):
+    def AddShapinAndSamplin(self, shapin_rise = 12 *unit.ns, shapin_tau = 28 *unit.ns, samplin_rate = 25 *unit.ns, t_binin = 0.1 *unit.ns):
 
-        shaping_rise    = shaping_rise.to(unit.ns).magnitude
+        shapin_rise     = shapin_rise.to(unit.ns).magnitude
         shapin_tau      = shapin_tau.to(unit.ns).magnitude
         samplin_rate    = samplin_rate.to(unit.ns).magnitude
         t_binin         = t_binin.to(unit.ns).magnitude
@@ -425,7 +425,7 @@ class s2Signal:
 
         # for the Shaping
         bin_means               = (bin_edges[:-1] + bin_edges[1:])/2
-        generic_sipm_response   = ResponseSiPM(1, bin_means, bin_means.mean(), shaping_rise, shapin_tau)
+        generic_sipm_response   = ResponseSiPM(1, bin_means, bin_means.mean(), shapin_rise, shapin_tau)
 
         # for the Samplin
         samplin_step = int(samplin_rate//t_binin)
@@ -592,8 +592,8 @@ def CreateSignalHDF5(hdf5output_path,
                      TPC,
                      Events_Dict,
                      fiducial_radio     = 490   *unit.mm,
-                     shapin_rise        = 25    *unit.ns,
-                     shapin_tau         = 25    *unit.ns,
+                     shapin_rise        = 12    *unit.ns,
+                     shapin_tau         = 28    *unit.ns,
                      samplin_rate       = 25    *unit.ns,
                      t_binin            = 1     *unit.ns,
                      units              = 'pes/ns',
@@ -654,7 +654,8 @@ def CreateSignalHDF5(hdf5output_path,
                                    'Time (see s2 table)', 
                                    'Signal (see s2 table)', 
                                    'SamplingRate', 
-                                   'ShapingDecayConstant'
+                                   'ShapingRiseTime',
+                                   'ShapingDecayTime'
                                   ]
     config_df['ParameterValue'] = [event_id,
                                    TPC.NSensors,
@@ -664,6 +665,7 @@ def CreateSignalHDF5(hdf5output_path,
                                    None,
                                    None,
                                    float(samplin_rate.magnitude),
+                                   float(shapin_rise.magnitude),
                                    float(shapin_tau.magnitude)
                                   ]
     config_df['ParameterUnits'] = np.vectorize(str)([unit.dimensionless,
@@ -674,6 +676,7 @@ def CreateSignalHDF5(hdf5output_path,
                                                      unit.ns,
                                                      units,
                                                      samplin_rate.units,
+                                                     shapin_rise.units,
                                                      shapin_tau.units
                                                     ])
     config_df = pd.DataFrame(config_df)
