@@ -163,7 +163,8 @@ class HPGXeTPC:
         # ref: (https://iopscience.iop.org/article/10.1088/1748-0221/10/03/P03025/pdf)
         self.RecombinationFactor = recombi_factor
 
-    def SetElectronLifetime(self, lifetime = 1e7 *unit.ns):
+    def SetElectronLifetime(self, lifetime = 1000 *unit.ms):
+        # ref: nexus default
         self.ElectronLifetime = (lifetime).to(unit.ns)
 
     def SetEL(self, v_drift_EL = 2.5 *unit.mm/unit.us):
@@ -368,9 +369,10 @@ class s2Signal:
         self.EventType          = nexusEvent.EventType
         self.EventID            = nexusEvent.EventID
         self.SensorResponse     = {}
+        self.TotalNie           = nexusEvent.NIonElectrons.sum()
 
         prim_e_r                = nexusEvent.PrimaryElectronR.to(unit.mm)
-        self.PrimaryElectronsR  = prim_e_r.magnitude.astype(np.float32) # [mm]
+        self.PrimaryElectronsR  = prim_e_r.magnitude.astype(np.float32)[0] # [mm]
 
         if nexusEvent.NIonElectrons.sum() > 0:
 
@@ -417,7 +419,6 @@ class s2Signal:
         n_sensors   = len(sensor_keys)
 
         time_data   = self.Time.to(unit.ns).magnitude # [ns]
-        prim_e_r    = self.PrimaryElectronsR # [mm]
 
         # for the s2 as deltas
         tail_in_ns  = shapin_tau*4 # [ns]
@@ -538,17 +539,17 @@ class s2Signal:
 
     def CreateS2DataFrames(self, 
                            event_id, 
-                           event_type,
                            units = 'pes/ns',
                            impedance_in_ohm   = 50 # only used if units = mV
                           ):
 
         # Create a dictionary for this event's signal
         # Event info
-        event_df                = {}
-        event_df['event_id']    = [event_id]
-        event_df['N_ie']        = [len(self.Time)] # Number of ionization electrons
-        event_df['event_type']  = [event_type]
+        event_df                                = {}
+        event_df['event_id']                    = [event_id]
+        event_df['N_ie']                        = [self.TotalNie] # Number of ionization electrons
+        event_df['event_type']                  = [self.EventType]
+        event_df['radial_coordinate_in_mm']     = [self.PrimaryElectronsR]
 
         # Waveforms
         s2_df                   = {}
@@ -637,7 +638,7 @@ def CreateSignalHDF5(hdf5output_path,
                     s2signal = s2Signal(s2table, TPC, NexusEvent)
                     s2signal.AddShapinAndSamplin(shapin_rise, shapin_tau, samplin_rate, t_binin)
 
-                    event_df, signal_df    = s2signal.CreateS2DataFrames(event_id, event_type, units, impedance_in_ohm)
+                    event_df, signal_df    = s2signal.CreateS2DataFrames(event_id, units, impedance_in_ohm)
 
                     setup.safe_write_to_hdf(event_df, hdf5output_path, '/s2simulation/events')
                     setup.safe_write_to_hdf(signal_df, hdf5output_path, '/s2simulation/s2')
@@ -813,10 +814,10 @@ class DynamicRange:
         ax.text(0.6, .85, 'max value =%.2f'%(s2.max()),
         transform=ax.transAxes, fontsize=0.5*font_size, bbox=dict(facecolor='1.', edgecolor='none', pad=3.0))
 
-        ax.text(0.6, .8, '$\mu$=%.2f'%(s2.mean()),
+        ax.text(0.6, .8, '$\mu$ = %.2f'%(s2.mean()),
         transform=ax.transAxes, fontsize=0.5*font_size, bbox=dict(facecolor='1.', edgecolor='none', pad=3.0))
 
-        ax.text(0.6, .75, '$\sigma$=%.2f'%(s2.std()),
+        ax.text(0.6, .75, '$\sigma$ = %.2f'%(s2.std()),
         transform=ax.transAxes, fontsize=0.5*font_size, bbox=dict(facecolor='1.', edgecolor='none', pad=3.0))
 
         ax.text(0.6, .7, '$N_{entries}$ = %s'%(int(events.sum())),
