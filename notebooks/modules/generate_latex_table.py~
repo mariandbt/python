@@ -1,0 +1,24 @@
+from pylatex import Document, Table, Tabular, NoEscape
+
+# Create a new LaTeX document
+doc = Document()
+
+# Create a table
+with doc.create(Table(position='h!')) as table:
+    table.add_caption('Caption for the table')
+    table.append(NoEscape(r'\centering'))
+    with doc.create(Tabular('|c|c|c|c|c|')) as tabular:
+        tabular.add_hline()
+        tabular.add_row(['Function', 'Timecost', 'N_calls', 'Function description', 'Mother function'])
+        tabular.add_hline()
+        for _ in range(5):  # Adding 5 empty rows
+            tabular.add_row(['', '', '', '', ''])
+            tabular.add_hline()
+
+# Save the document to a .tex file
+doc.generate_tex('latex_table')
+
+import subprocess
+
+# Run the LaTeX compiler (make sure pdflatex is installed and available in your PATH)
+subprocess.run(["pdflatex", "latex_table.tex"])

@@ -178,7 +178,7 @@ class HPGXeTPC:
         self.NSensors           = len(sns_positions) # update number of sensors
         self.SensorsPerPanel    = int(self.NSensors/self.NPanels) 
 
-        self.SensorsPosID   = np.arange((-self.NSensors/2), (self.NSensors/2))
+        self.SensorsPosID   = np.arange(self.NSensors)
         self.SensorsIDs     = np.array(sns_positions.sensor_id)
         self.SensorX        = np.array(sns_positions.x) *unit.mm
         self.SensorY        = np.array(sns_positions.y) *unit.mm
@@ -263,18 +263,16 @@ def BuildSensorsDict(TPC):
 
 def FindSensor(sensor_id, rotation, TPC):
 
+    max_pos = max(id_to_pos_dict.values()) + 1
     pos     = id_to_pos_dict[sensor_id]
 
     new_pos = pos - rotation*TPC.SensorsPerPanel
 
-    if (new_pos == TPC.NSensors/2):
-        new_pos = -TPC.NSensors/2
+    if (new_pos == max_pos):
+        new_pos = 0
 
-    if (new_pos > TPC.NSensors/2):
-        new_pos = new_pos%(TPC.NSensors/2)
-
-    if (new_pos < -TPC.NSensors/2):
-        new_pos = new_pos%(-TPC.NSensors/2)
+    else:
+        new_pos = new_pos%(max_pos)
 
     new_sens_id = pos_to_id_dict[new_pos]
 

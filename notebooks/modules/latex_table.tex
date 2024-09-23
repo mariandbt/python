@@ -1,0 +1,48 @@
+\documentclass{article}%
+\usepackage[T1]{fontenc}%
+\usepackage[utf8]{inputenc}%
+\usepackage{lmodern}%
+\usepackage{textcomp}%
+\usepackage{lastpage}%
+%
+\usepackage{array}%
+\usepackage{makecell}%
+\usepackage{graphicx}%
+\usepackage[a4paper,margin=1in]{geometry}%
+\usepackage{caption}%
+\captionsetup[table]{labelformat=empty}%
+%
+\begin{document}%
+\normalsize%
+
+
+\begin{table}[!h]%
+\caption*{294 $\beta \beta$ events $\rightarrow$ \textasciitilde 40910 s (\textasciitilde 11h 20mins)}%
+\centering%
+\resizebox{1.1\textwidth}{!}{%%
+\begin{tabular}{|m{4cm}|m{2cm}|m{2cm}|m{5cm}|m{3.5cm}|}%
+\hline%
+\makecell[c]{Function}&\makecell[c]{Timecost [s]}&\makecell[c]{$N_{calls}$}&\makecell[c]{Function description}&\makecell[c]{Mother function}\\%
+\hline%
+\makecell[c]{\\ CreateSignalHDF5}&\makecell[c]{\\ \textasciitilde 40908}&\makecell[c]{\\ 1}&\makecell[c]{Takes the hits from\\ nexus as input and\\ returns a .h5 file with the\\ s2 waveforms generated}&\makecell[c]{\\ None}\\%
+\hline%
+\makecell[c]{\\ AddShapinAndSamplin}&\makecell[c]{\\ \textasciitilde 26418}&\makecell[c]{294\\ (1 per event\\ non-empty)}&\makecell[c]{Takes raw waveforms and\\ adds the sensor\textquotesingle s response\\ effects returning s2 waveforms\\ shaped and sampled}&\makecell[c]{\\ CreateSignalHDF5}\\%
+\hline%
+\makecell[c]{convolve}&\makecell[c]{\\ \textasciitilde 26075}&\makecell[c]{31752\\ (108 per\\ event, 1 per\\ sensor)}&\makecell[c]{Creates a convolution between\\ a delta-like signal and a\\ generic SiPM\textquotesingle s response\\ waveform for the shaping}&\makecell[c]{\\ AddShapinAndSamplin}\\%
+\hline%
+\makecell[c]{\\ FindS2}&\makecell[c]{\\ \textasciitilde 11339}&\makecell[c]{\\ 31752}&\makecell[c]{Finds the corresponding\\ s2 signal from the light\\ maps according to the\\ particle\textquotesingle s position}&\makecell[c]{\\ CreateSignalHDF5}\\%
+\hline%
+\makecell[c]{FindRotation}&\makecell[c]{\textasciitilde 5394}&\makecell[c]{3105745740\\ (1 per ie$^-$,\\ 1 per sensor)}&\makecell[c]{Finds the rotation based\\ on the particle\textquotesingle s position}&\makecell[c]{FindS2}\\%
+\hline%
+\makecell[c]{safe\_write\_to\_hdf}&\makecell[c]{\textasciitilde 2887}&\makecell[c]{589\\ (2 per event\\ $+$1 to save\\ configuration)}&\makecell[c]{Saves signal, event, and\\ configuration info in a .h5}&\makecell[c]{CreateSignalHDF5}\\%
+\hline%
+\makecell[c]{FindSensor}&\makecell[c]{\textasciitilde 1737}&\makecell[c]{ 3105745740}&\makecell[c]{Finds the sensor ID\\ given it\textquotesingle s rotation}&\makecell[c]{FindS2}\\%
+\hline%
+\makecell[c]{\\ AddDriftAndDiffusion}&\makecell[c]{\\ \textasciitilde 170}&\makecell[c]{\\ 294}&\makecell[c]{Given the energy hits from\\ nexus, it simulates the\\ drift and diffusion of\\ the ie$^-$}&\makecell[c]{\\ CreateSignalHDF5}\\%
+\hline%
+\end{tabular}%
+}%
+\end{table}
+
+%
+\end{document}
